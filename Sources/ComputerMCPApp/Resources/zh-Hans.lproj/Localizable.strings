@@ -1,0 +1,2466 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>%@ B</key>
+	<string>%@ B</string>
+	<key>%@ active connection(s)</key>
+	<string>%@ 个活跃连接</string>
+	<key>%@ allows at most %@</key>
+	<string>%@最多允许%@</string>
+	<key>%@ arguments</key>
+	<string>%@ 个参数</string>
+	<key>%@ bytes</key>
+	<string>%@ 字节</string>
+	<key>%@ can't be read. Until it can, nothing it limits is allowed; the settings below apply again once it can be read.</key>
+	<string>无法读取%@。在能读取之前，它所限制的一切都不允许；能读取后，下面的设置会重新生效。</string>
+	<key>%@ isn't available: it isn't installed, or its command didn't respond.</key>
+	<string>%@ 不可用：未安装，或其命令没有响应。</string>
+	<key>%@ ms</key>
+	<string>%@ 毫秒</string>
+	<key>%@ must not be empty.</key>
+	<string>%@不能为空。</string>
+	<key>%@ of %@ running</key>
+	<string>%@/%@ 正在运行</string>
+	<key>%@ registered root(s)</key>
+	<string>%@ 个已注册根目录</string>
+	<key>%@ reported an error while changing its settings.</key>
+	<string>%@ 在修改其设置时报告了错误。</string>
+	<key>%@ retained revision(s)</key>
+	<string>保留了 %@ 个修订版本</string>
+	<key>%@ revision(s)</key>
+	<string>%@ 个修订版本</string>
+	<key>%@ seconds</key>
+	<string>%@ 秒</string>
+	<key>%@ tools</key>
+	<string>%@ 个工具</string>
+	<key>%@ · %@</key>
+	<string>%@（%@）</string>
+	<key>%@'s settings changed after you reviewed them. Nothing was changed; review again.</key>
+	<string>%@ 的设置在您检查后发生了变化。未做任何更改，请重新检查。</string>
+	<key>A current end-to-end request was observed</key>
+	<string>已观察到本次端到端请求</string>
+	<key>A matching digest verifies the archive bytes, not an official publisher. New plugins start disabled. Updates keep host settings and earlier versions.</key>
+	<string>摘要匹配只能验证归档文件内容，不能证明官方发布者身份。新插件默认停用；更新保留宿主设置及先前版本。</string>
+	<key>A matching successful request has been observed.</key>
+	<string>已观察到匹配的成功请求。</string>
+	<key>A plugin installation or recovery is still running. Retry when it finishes.</key>
+	<string>插件安装或恢复仍在运行，请等待其结束后重试。</string>
+	<key>A project is registered</key>
+	<string>已注册项目</string>
+	<key>A remote Cloudflare gateway profile is required.</key>
+	<string>需要远程 Cloudflare 网关配置方案。</string>
+	<key>A remotely managed named-tunnel token is required. Quick Tunnel and noauth are not supported.</key>
+	<string>需要远程管理的命名隧道令牌。不支持 Quick Tunnel 和 noauth。</string>
+	<key>A required dependency or component is unavailable.</key>
+	<string>所需依赖或组件不可用。</string>
+	<key>A script interpreter is unavailable in the launch environment. Check its path and runtime installation.</key>
+	<string>启动环境中缺少可用的脚本解释器，请检查其路径与运行时安装状态。</string>
+	<key>Absolute executable path</key>
+	<string>可执行程序的绝对路径</string>
+	<key>Access Blocked</key>
+	<string>访问已阻止</string>
+	<key>Access ended</key>
+	<string>访问已结束</string>
+	<key>Access for %@</key>
+	<string>%@ 的访问权限</string>
+	<key>Access unavailable</key>
+	<string>权限不可用</string>
+	<key>Accessibility</key>
+	<string>辅助功能</string>
+	<key>Account availability and organization policy are managed in ChatGPT.</key>
+	<string>账号可用性和组织策略由 ChatGPT 管理。</string>
+	<key>Activate</key>
+	<string>激活</string>
+	<key>Activate %@?</key>
+	<string>激活“%@”？</string>
+	<key>Active</key>
+	<string>已激活</string>
+	<key>Active profile</key>
+	<string>当前配置方案</string>
+	<key>Activity</key>
+	<string>活动</string>
+	<key>Add</key>
+	<string>添加</string>
+	<key>Add ChatGPT Connection</key>
+	<string>添加 ChatGPT 连接</string>
+	<key>Add Cloudflare Connection</key>
+	<string>添加 Cloudflare 连接</string>
+	<key>Add Cloudflare Tunnel</key>
+	<string>添加 Cloudflare 隧道</string>
+	<key>Add Connection</key>
+	<string>添加连接</string>
+	<key>Add MCP</key>
+	<string>添加 MCP</string>
+	<key>Add Project</key>
+	<string>添加项目</string>
+	<key>Add Tunnel</key>
+	<string>添加隧道</string>
+	<key>Add a Tunnel manifest and local Keychain credentials.</key>
+	<string>添加隧道清单和本地钥匙串凭据。</string>
+	<key>Add a connection to begin.</key>
+	<string>添加连接以开始。</string>
+	<key>Add a folder to create a persistent local project grant.</key>
+	<string>添加文件夹以创建持久的本地项目授权。</string>
+	<key>Add a local package to review its contributions before enabling it.</key>
+	<string>添加本地包，查看其集成内容后再启用。</string>
+	<key>Add a remotely managed named tunnel. Quick Tunnel and noauth are Validation development-only.</key>
+	<string>添加远程管理的命名隧道。Quick Tunnel 和 noauth 仅用于 Validation 开发。</string>
+	<key>Add a validated profile to the Computer MCP configuration.</key>
+	<string>向 Computer MCP 配置中添加经过验证的配置方案。</string>
+	<key>Add argument</key>
+	<string>添加参数</string>
+	<key>Add executable binding</key>
+	<string>添加程序绑定</string>
+	<key>Add local package</key>
+	<string>添加本地包</string>
+	<key>Add one ChatGPT connection in Computer MCP to continue.</key>
+	<string>在 Computer MCP 中添加一个 ChatGPT 连接以继续。</string>
+	<key>Add one Cloudflare connection in Computer MCP to continue.</key>
+	<string>在 Computer MCP 中添加一个 Cloudflare 连接以继续。</string>
+	<key>Add owner policy for %@</key>
+	<string>为“%@”添加所有者策略</string>
+	<key>Add the hostname and named-tunnel token. Computer MCP will create an access token for the protected loopback origin when requested.</key>
+	<string>添加主机名和命名隧道令牌。需要时，Computer MCP 会为受保护的本地回环源创建访问令牌。</string>
+	<key>Add the tunnel ID, tunnel-client profile, gateway profile, and OpenAI API key. The API key is stored in Keychain.</key>
+	<string>添加隧道 ID、tunnel-client 配置方案、网关配置方案和 OpenAI API 密钥。API 密钥会存储在钥匙串中。</string>
+	<key>Add ~/.local/bin to PATH to invoke computer-mcp by name.</key>
+	<string>将 ~/.local/bin 添加到 PATH，即可按名称调用 computer-mcp。</string>
+	<key>Add…</key>
+	<string>添加…</string>
+	<key>Advanced</key>
+	<string>高级</string>
+	<key>After the gateway and named tunnel are Ready, connect the intended public MCP consumer using the one-time Computer MCP Access Token, then invoke one tool.</key>
+	<string>网关和命名隧道就绪后，使用一次性 Computer MCP 访问令牌连接目标公网 MCP 消费者，然后调用一个工具。</string>
+	<key>After the gateway and tunnel are Ready, open ChatGPT, create or update the Connector with the tunnel endpoint, then invoke one Computer MCP tool in a new chat.</key>
+	<string>网关和隧道就绪后，打开 ChatGPT，使用隧道端点创建或更新连接器，然后在新对话中调用一个 Computer MCP 工具。</string>
+	<key>All</key>
+	<string>全部</string>
+	<key>All MCP Servers</key>
+	<string>所有 MCP 服务器</string>
+	<key>All MCP servers and CLIs contributed by this package share one provider sandbox container, along with its approved permissions, network access, and read exceptions.</key>
+	<string>此插件包提供的所有 MCP 服务器和 CLI 共享同一个提供方沙盒容器，并共用其已批准的权限、网络访问与读取例外。</string>
+	<key>All Plugins</key>
+	<string>所有插件</string>
+	<key>All Projects</key>
+	<string>所有项目</string>
+	<key>All also includes tools added by future server updates.</key>
+	<string>“全部”也包括服务端未来更新时新增的工具。</string>
+	<key>All configured connections are healthy.</key>
+	<string>所有已配置的连接均处于健康状态。</string>
+	<key>All contributions</key>
+	<string>全部类型</string>
+	<key>All current and future MCP servers</key>
+	<string>当前及未来的所有 MCP 服务器</string>
+	<key>All current and future plugins</key>
+	<string>当前及未来的所有插件</string>
+	<key>All current and future projects</key>
+	<string>当前及未来的所有项目</string>
+	<key>All current and future tools</key>
+	<string>当前及未来的全部工具</string>
+	<key>Allow</key>
+	<string>允许</string>
+	<key>Allow Full Access</key>
+	<string>允许完全访问</string>
+	<key>Allow Full Access?</key>
+	<string>允许完全访问？</string>
+	<key>Allow Full access…</key>
+	<string>允许完全访问…</string>
+	<key>Allow arbitrary raw arguments</key>
+	<string>允许任意原始参数</string>
+	<key>Allow for</key>
+	<string>授权期限</string>
+	<key>Allow host tools and sandboxed programs to read files in these folders.</key>
+	<string>允许宿主工具和沙盒程序读取这些文件夹中的文件。</string>
+	<key>Allow scoped host services</key>
+	<string>允许调用限定作用域的宿主服务</string>
+	<key>Allow sign-in with OAuth</key>
+	<string>允许通过 OAuth 登录</string>
+	<key>Allowed</key>
+	<string>已允许</string>
+	<key>Allowed client hosts</key>
+	<string>允许的客户端主机</string>
+	<key>Allowed tool names, one per line</key>
+	<string>允许的工具名称，每行一个</string>
+	<key>Allowed tools</key>
+	<string>允许的工具</string>
+	<key>Allowing adds the host to the project's network access in the sandbox.</key>
+	<string>允许后，这个主机会加入该项目在沙盒中的网络访问。</string>
+	<key>Allowing gives “%@” access to this project and all its worktrees until you revoke it.</key>
+	<string>允许后，“%@”可以访问此项目及其所有 worktree，直到你撤销权限。</string>
+	<key>Allowing registers this folder as a project and gives “%@” access to it and its worktrees until you revoke it.</key>
+	<string>允许后，此文件夹会注册为项目，“%@”可以访问它及其所有 worktree，直到你撤销权限。</string>
+	<key>Always</key>
+	<string>始终允许</string>
+	<key>Always Allow this Client</key>
+	<string>始终允许此客户端</string>
+	<key>Always adds this host to the project’s saved network access.</key>
+	<string>“始终允许”会将此主机添加到项目已保存的网络访问设置中。</string>
+	<key>Always applies to every connection that uses “%@”.</key>
+	<string>“始终允许”适用于使用“%@”的每个连接。</string>
+	<key>An OpenAI API key is required when creating a Tunnel profile.</key>
+	<string>创建隧道配置方案时需要 OpenAI API 密钥。</string>
+	<key>An applicable policy source can't be read.</key>
+	<string>无法读取一项适用的策略来源。</string>
+	<key>An empty prefix preserves original tool names. Conflicts are rejected.</key>
+	<string>前缀留空可保留工具原名，名称冲突时拒绝应用。</string>
+	<key>An empty selection exposes no tools.</key>
+	<string>选择为空时不暴露任何工具。</string>
+	<key>An empty whitelist permits no tools.</key>
+	<string>空白名单不允许任何工具。</string>
+	<key>Another client change is in progress. Try again shortly.</key>
+	<string>另一项客户端更改正在进行，请稍后再试。</string>
+	<key>Another gateway configuration change is in progress. Retry after it finishes.</key>
+	<string>另一项网关配置变更正在进行。请待其完成后重试。</string>
+	<key>Any Host</key>
+	<string>任意主机</string>
+	<key>App</key>
+	<string>应用</string>
+	<key>App Server, Exec, and MCP paths are independently isolated.</key>
+	<string>App Server、Exec 和 MCP 路径相互独立隔离。</string>
+	<key>Apple silicon</key>
+	<string>Apple 芯片</string>
+	<key>Application support</key>
+	<string>应用支持目录</string>
+	<key>Applied</key>
+	<string>已生效</string>
+	<key>Apply</key>
+	<string>应用</string>
+	<key>Applying this change reconnects the running gateway.</key>
+	<string>应用此变更会重新连接运行中的网关。</string>
+	<key>Approval required</key>
+	<string>需要批准</string>
+	<key>Approve</key>
+	<string>批准</string>
+	<key>Approve &amp; Enable</key>
+	<string>批准并启用</string>
+	<key>Approve only if the code matches the one shown in the browser where you are signing in.</key>
+	<string>仅当此代码与您正在登录的浏览器页面上显示的代码一致时才批准。</string>
+	<key>Approved</key>
+	<string>已批准</string>
+	<key>Approved %@</key>
+	<string>批准于 %@</string>
+	<key>Approved read exceptions grant read-only access inside the sandbox to the exact resolved paths shown.</key>
+	<string>已批准的读取例外仅在沙盒内授予所示确切解析路径的只读访问权限。</string>
+	<key>Argument</key>
+	<string>参数</string>
+	<key>Arguments</key>
+	<string>参数</string>
+	<key>Arguments (JSON array)</key>
+	<string>参数（JSON 数组）</string>
+	<key>Ask</key>
+	<string>询问</string>
+	<key>Ask uses the profile's default project rule. A wildcard rule still applies.</key>
+	<string>“询问”使用配置方案的默认项目规则。通配规则仍然生效。</string>
+	<key>Asset ID</key>
+	<string>归档 ID</string>
+	<key>Asset page %@</key>
+	<string>归档页 %@</string>
+	<key>Audit</key>
+	<string>审计</string>
+	<key>Available</key>
+	<string>可用</string>
+	<key>Background</key>
+	<string>后台</string>
+	<key>Bearer token</key>
+	<string>Bearer 令牌</string>
+	<key>Before you begin</key>
+	<string>开始之前</string>
+	<key>Binary compatibility</key>
+	<string>二进制兼容性</string>
+	<key>Bindings select existing executables. Computer MCP does not install or update external dependencies.</key>
+	<string>绑定用于选择已有程序。Computer MCP 不安装或更新外部依赖。</string>
+	<key>Blocked</key>
+	<string>已阻塞</string>
+	<key>Blocked Read Location</key>
+	<string>禁止读取的位置</string>
+	<key>Blocked Read Locations</key>
+	<string>禁止读取的位置</string>
+	<key>Bookmark stale</key>
+	<string>书签已失效</string>
+	<key>Broken link</key>
+	<string>符号链接已损坏</string>
+	<key>Built-in Tools</key>
+	<string>内置工具</string>
+	<key>Builtin</key>
+	<string>内置</string>
+	<key>Bundled</key>
+	<string>内置</string>
+	<key>CLI</key>
+	<string>CLI</string>
+	<key>CLI enabled</key>
+	<string>启用命令行集成</string>
+	<key>CLI, MCP, Computer Use, and external runtimes</key>
+	<string>CLI、MCP、Computer Use 与外部运行时</string>
+	<key>Cached</key>
+	<string>缓存结果</string>
+	<key>Caller</key>
+	<string>调用渠道</string>
+	<key>Can't Be Read</key>
+	<string>无法读取</string>
+	<key>Cancel</key>
+	<string>取消</string>
+	<key>Cancel installation</key>
+	<string>取消安装</string>
+	<key>Cancel search</key>
+	<string>取消搜索</string>
+	<key>Cancelling and checking the result…</key>
+	<string>正在取消并核对结果…</string>
+	<key>Capability</key>
+	<string>能力</string>
+	<key>Capability decision recorded</key>
+	<string>已记录能力决策</string>
+	<key>Capability decisions will appear here after the gateway processes calls.</key>
+	<string>网关处理调用后，能力决策会显示在这里。</string>
+	<key>Catalog could not be refreshed. Showing saved results.</key>
+	<string>目录刷新失败，正在显示已保存的结果。</string>
+	<key>Catalog generation %@</key>
+	<string>目录版本 %@</string>
+	<key>Catalog issues</key>
+	<string>目录问题</string>
+	<key>Catalog page %@</key>
+	<string>目录第 %@ 页</string>
+	<key>Change the filter to see other decisions.</key>
+	<string>更改筛选条件以查看其他决策。</string>
+	<key>Changes apply only if the saved configuration has not changed.</key>
+	<string>仅在已保存的配置未被他人修改时应用更改。</string>
+	<key>Changes are validated, versioned, and activated atomically.</key>
+	<string>更改会经过验证、版本化，并以原子方式激活。</string>
+	<key>ChatGPT</key>
+	<string>ChatGPT</string>
+	<key>ChatGPT Control</key>
+	<string>ChatGPT 控制</string>
+	<key>ChatGPT Observe</key>
+	<string>ChatGPT 观察</string>
+	<key>ChatGPT and Cloudflare each have a complete guided setup page.</key>
+	<string>ChatGPT 和 Cloudflare 都提供完整的引导式设置页面。</string>
+	<key>ChatGPT connection</key>
+	<string>ChatGPT 连接</string>
+	<key>ChatGPT connection is not configured</key>
+	<string>尚未配置 ChatGPT 连接</string>
+	<key>Check again</key>
+	<string>重新检查</string>
+	<key>Check connection</key>
+	<string>检查连接</string>
+	<key>Check connection health</key>
+	<string>检查连接健康状态</string>
+	<key>Check for Request</key>
+	<string>检查请求</string>
+	<key>Check package</key>
+	<string>检查插件包</string>
+	<key>Checked at</key>
+	<string>检查时间</string>
+	<key>Checking client access…</key>
+	<string>正在检查客户端权限…</string>
+	<key>Checking connection readiness</key>
+	<string>正在检查连接就绪状态</string>
+	<key>Checking this connection</key>
+	<string>正在检查此连接</string>
+	<key>Checking…</key>
+	<string>正在检查…</string>
+	<key>Checks</key>
+	<string>检查</string>
+	<key>Checks include disabled contributions. Nothing is enabled, executed or installed.</key>
+	<string>检查包含已禁用的贡献，不会启用、执行或安装任何内容。</string>
+	<key>Checks this MCP’s configuration, credentials and process records. Connection and catalog checks are unavailable in this build.</key>
+	<string>检查此 MCP 的配置、凭据和进程记录。此版本暂不支持连接和工具目录检查。</string>
+	<key>Choose a ZIP, TAR or gzip package and enter its expected identity and SHA-256 from a trusted source.</key>
+	<string>选择 ZIP、TAR 或 gzip 包，并填入从可信来源获得的预期标识和 SHA-256。</string>
+	<key>Choose a profile</key>
+	<string>选择配置方案</string>
+	<key>Choose a project</key>
+	<string>选择项目</string>
+	<key>Choose a remote connection when you need one</key>
+	<string>需要时选择远程连接</string>
+	<key>Choose an archive for your Mac. The App checks compatibility and source again before installation. Publisher provenance is not a signature.</key>
+	<string>请选择适合此 Mac 的归档包。安装前会重新检查兼容性和来源；发布者来源证明不等于签名。</string>
+	<key>Choose archive</key>
+	<string>选择归档包</string>
+	<key>Choose path…</key>
+	<string>选择路径…</string>
+	<key>Choose release archive</key>
+	<string>选择发布归档包</string>
+	<key>Choose the connection you want to set up. You can return here at any time.</key>
+	<string>选择你要设置的连接。你可以随时返回这里。</string>
+	<key>Choose the folder for %@. Existing project permissions will apply to this folder.</key>
+	<string>为 %@ 选择文件夹。现有项目权限将适用于此文件夹。</string>
+	<key>Choose what connected clients can do</key>
+	<string>选择已连接客户端可以执行的操作</string>
+	<key>Claude Code</key>
+	<string>Claude Code</string>
+	<key>Claude Desktop</key>
+	<string>Claude Desktop</string>
+	<key>Claude Desktop must be closed before applying this plan.</key>
+	<string>应用此更改前必须先退出 Claude Desktop。</string>
+	<key>Clear Policy</key>
+	<string>清除策略</string>
+	<key>Clear Policy…</key>
+	<string>清除策略…</string>
+	<key>Clear the saved policy for %@?</key>
+	<string>要清除“%@”的已保存策略吗？</string>
+	<key>Clearing removes this owner's policy. Limits from other sources still apply.</key>
+	<string>清除后将移除此所有者的策略。其他来源的限制仍会生效。</string>
+	<key>Client</key>
+	<string>客户端</string>
+	<key>Client %@</key>
+	<string>客户端 %@</string>
+	<key>Client access</key>
+	<string>客户端权限</string>
+	<key>Client access changed. Close this window and review the connection again.</key>
+	<string>客户端权限已变化，请关闭此窗口并重新查看连接。</string>
+	<key>Client access is unavailable. Refresh to check current connections.</key>
+	<string>客户端权限暂不可用，请刷新以检查当前连接。</string>
+	<key>Client access status unavailable</key>
+	<string>客户端权限状态不可用</string>
+	<key>Client profile unavailable</key>
+	<string>客户端配置不可用</string>
+	<key>Clients and Plugins</key>
+	<string>客户端与插件</string>
+	<key>Clients and plugins with access to a project can read it. With Read &amp; Write they can change it in worktrees and merge their work back.</key>
+	<string>有项目权限的客户端和插件可以读取项目；有“读写”权限的还可以在 worktree 中修改并把改动合并回去。</string>
+	<key>Clients appear here when they connect.</key>
+	<string>客户端连接后会显示在此处。</string>
+	<key>Clients sharing the same connection credential share a trusted identity. Ending this session does not revoke an always-allowed client.</key>
+	<string>使用同一连接凭据的客户端共享可信身份。结束此会话不会撤销“始终允许”的客户端授权。</string>
+	<key>Clients that cannot send a custom header, such as claude.ai, sign in with OAuth. You approve each new client in Client access by matching the code shown on its browser page. Separate client hosts with commas.</key>
+	<string>无法发送自定义请求头的客户端（例如 claude.ai）通过 OAuth 登录。您需要在“客户端权限”中核对其浏览器页面显示的代码，逐个批准新客户端。多个客户端主机用逗号分隔。</string>
+	<key>Clients, Plugins, and Local Servers</key>
+	<string>客户端、插件和本地服务器</string>
+	<key>Close</key>
+	<string>关闭</string>
+	<key>Close Welcome</key>
+	<string>关闭欢迎页</string>
+	<key>Close other programs that edit this file. A write after the final check can be lost.</key>
+	<string>请关闭会编辑此文件的其他程序。最终检查之后的写入可能会丢失。</string>
+	<key>Cloudflare</key>
+	<string>Cloudflare</string>
+	<key>Cloudflare Access service tokens belong to consumers and are never stored here.</key>
+	<string>Cloudflare Access 服务令牌属于消费者，绝不会存储在这里。</string>
+	<key>Cloudflare Control</key>
+	<string>Cloudflare 控制</string>
+	<key>Cloudflare Observe</key>
+	<string>Cloudflare 观察</string>
+	<key>Cloudflare Tunnel</key>
+	<string>Cloudflare 隧道</string>
+	<key>Cloudflare Tunnel Logs</key>
+	<string>Cloudflare 隧道日志</string>
+	<key>Cloudflare Tunnel diagnostics failed</key>
+	<string>Cloudflare 隧道诊断失败</string>
+	<key>Cloudflare connection is not configured</key>
+	<string>尚未配置 Cloudflare 连接</string>
+	<key>Cloudflare named tunnel</key>
+	<string>Cloudflare 命名隧道</string>
+	<key>Cloudflare named tunnel setup, protected origin, and real-request verification</key>
+	<string>Cloudflare 命名隧道设置、受保护源站与真实请求验证</string>
+	<key>Codex</key>
+	<string>Codex</string>
+	<key>Command</key>
+	<string>命令</string>
+	<key>Command line tool</key>
+	<string>命令行工具</string>
+	<key>Command line tool is installed</key>
+	<string>命令行工具已安装</string>
+	<key>Command line tool is not installed</key>
+	<string>命令行工具尚未安装</string>
+	<key>Command line tool status is unavailable</key>
+	<string>命令行工具状态不可用</string>
+	<key>Commit</key>
+	<string>提交</string>
+	<key>Committed</key>
+	<string>已提交</string>
+	<key>Complete in System Settings</key>
+	<string>在系统设置中完成</string>
+	<key>Complete the next required step.</key>
+	<string>完成下一个必需步骤。</string>
+	<key>Completed in %@ ms</key>
+	<string>在 %@ 毫秒内完成</string>
+	<key>Computer MCP</key>
+	<string>Computer MCP</string>
+	<key>Computer MCP Access Token created</key>
+	<string>已创建 Computer MCP 访问令牌</string>
+	<key>Computer MCP App</key>
+	<string>Computer MCP 应用</string>
+	<key>Computer MCP App is available</key>
+	<string>Computer MCP 应用可用</string>
+	<key>Computer MCP App is unavailable</key>
+	<string>Computer MCP 应用不可用</string>
+	<key>Computer MCP Diagnostics</key>
+	<string>Computer MCP 诊断</string>
+	<key>Computer MCP could not initialize: %@</key>
+	<string>Computer MCP 无法初始化：%@</string>
+	<key>Computer MCP couldn't confirm whether %@ applied the change. Check its settings before trying again.</key>
+	<string>Computer MCP 无法确认 %@ 是否已应用更改。请先检查其设置再重试。</string>
+	<key>Computer MCP couldn't confirm whether %@ finished %@. It last showed: %@. Check its settings, then refresh before trying again.</key>
+	<string>Computer MCP 无法确认 %@ 是否完成了%@。最后显示的状态：%@。请检查其设置并刷新后再重试。</string>
+	<key>Computer MCP couldn't read %@'s settings. Nothing was changed.</key>
+	<string>Computer MCP 无法读取 %@ 的设置，未做任何更改。</string>
+	<key>Computer MCP detects the executable and version; it does not download it.</key>
+	<string>Computer MCP 会检测可执行文件及其版本，但不会自动下载。</string>
+	<key>Computer MCP holds these macOS permissions for everything it runs in the sandbox. What each client or plugin may use of them is set above.</key>
+	<string>Computer MCP 为它在沙盒中运行的程序持有这些 macOS 权限。每个客户端或插件能用到多少，在上面设置。</string>
+	<key>Computer MCP runs %@'s own command</key>
+	<string>Computer MCP 将运行 %@ 自己的命令</string>
+	<key>Computer MCP's own command isn't available. Reinstall the App, then try again.</key>
+	<string>Computer MCP 自身的命令不可用。请重新安装应用后再试。</string>
+	<key>Computer MCP.app</key>
+	<string>Computer MCP.app</string>
+	<key>Computer MCP.app is not running or its owner-only control socket is unavailable.</key>
+	<string>Computer MCP.app 未运行，或其仅限当前用户的控制套接字不可用。</string>
+	<key>Computer MCP: %@</key>
+	<string>Computer MCP：%@</string>
+	<key>Computer Use</key>
+	<string>Computer Use</string>
+	<key>Configuration</key>
+	<string>配置</string>
+	<key>Configuration Profile</key>
+	<string>配置描述文件</string>
+	<key>Configure</key>
+	<string>配置</string>
+	<key>Configure ChatGPT</key>
+	<string>配置 ChatGPT</string>
+	<key>Configure Cloudflare</key>
+	<string>配置 Cloudflare</string>
+	<key>Configure OpenAI Secure MCP, start the gateway, and verify a real Connector request.</key>
+	<string>配置 OpenAI Secure MCP，启动网关，并验证一次真实的连接器请求。</string>
+	<key>Confirm Permissions</key>
+	<string>确认权限</string>
+	<key>Confirm the restored permissions in Privacy &amp; Security to edit this policy.</key>
+	<string>请先在“隐私与安全”中确认恢复的权限，再编辑此策略。</string>
+	<key>Confirm your ChatGPT plan supports Connectors</key>
+	<string>确认你的 ChatGPT 套餐支持连接器</string>
+	<key>Connect</key>
+	<string>连接</string>
+	<key>Connect %@ to Computer MCP?</key>
+	<string>将 %@ 连接到 Computer MCP？</string>
+	<key>Connect ChatGPT</key>
+	<string>连接 ChatGPT</string>
+	<key>Connect Codex, Claude Code or Claude Desktop, or copy the stdio command for another client.</key>
+	<string>连接 Codex、Claude Code 或 Claude Desktop，或为其他客户端复制 stdio 命令。</string>
+	<key>Connect a local MCP client</key>
+	<string>连接本地 MCP 客户端</string>
+	<key>Connect from the sandbox to devices on your local network.</key>
+	<string>允许沙盒连接本地网络中的设备。</string>
+	<key>Connect the consumer and make one successful MCP request to verify this path.</key>
+	<string>连接消费者并成功发起一次 MCP 请求，以验证此路径。</string>
+	<key>Connect through Cloudflare</key>
+	<string>通过 Cloudflare 连接</string>
+	<key>Connected</key>
+	<string>已连接</string>
+	<key>Connected %@</key>
+	<string>连接于 %@</string>
+	<key>Connected clients</key>
+	<string>已连接的客户端</string>
+	<key>Connected clients: %@</key>
+	<string>已连接的客户端：%@</string>
+	<key>Connected on demand through the MCP proxy.</key>
+	<string>通过 MCP 代理按需连接。</string>
+	<key>Connected to %@</key>
+	<string>已连接到 %@</string>
+	<key>Connection</key>
+	<string>连接</string>
+	<key>Connection %@</key>
+	<string>连接 %@</string>
+	<key>Connection checks are unavailable in this build.</key>
+	<string>此版本暂不支持连接检查。</string>
+	<key>Connection defaults</key>
+	<string>连接默认设置</string>
+	<key>Connection status</key>
+	<string>连接状态</string>
+	<key>Connection type restricted</key>
+	<string>连接类型受限</string>
+	<key>Connections</key>
+	<string>连接</string>
+	<key>Connect…</key>
+	<string>连接…</string>
+	<key>Container &amp; Execution</key>
+	<string>容器与执行方式</string>
+	<key>Continue</key>
+	<string>继续</string>
+	<key>Continue the %@ connection from its dedicated setup page.</key>
+	<string>前往专用设置页面继续配置 %@ 连接。</string>
+	<key>Contribution</key>
+	<string>集成类型</string>
+	<key>Contribution Requirements</key>
+	<string>组件需求</string>
+	<key>Control plane unavailable</key>
+	<string>控制平面不可用</string>
+	<key>Copy</key>
+	<string>复制</string>
+	<key>Copy stdio Command</key>
+	<string>复制 stdio 命令</string>
+	<key>Copy this once into the external consumer. Computer MCP stores it only in Keychain.</key>
+	<string>请一次性复制到外部消费者。Computer MCP 只会将它存储在钥匙串中。</string>
+	<key>Could not create diagnostics archive.</key>
+	<string>无法创建诊断归档。</string>
+	<key>Couldn't change %@</key>
+	<string>无法更改 %@</string>
+	<key>Create a remotely managed named tunnel</key>
+	<string>创建远程管理的命名隧道</string>
+	<key>Credential endpoint</key>
+	<string>凭据绑定地址</string>
+	<key>Credential is missing.</key>
+	<string>缺少凭据。</string>
+	<key>Credential is stored.</key>
+	<string>凭据已保存。</string>
+	<key>Current</key>
+	<string>当前</string>
+	<key>Current Saved Policy</key>
+	<string>当前保存的策略</string>
+	<key>Current Saved Source</key>
+	<string>当前保存的来源</string>
+	<key>Current tunnel state: failed.</key>
+	<string>当前隧道状态：失败。</string>
+	<key>Current tunnel state: stopped.</key>
+	<string>当前隧道状态：已停止。</string>
+	<key>Current “%@” entry</key>
+	<string>当前的“%@”条目</string>
+	<key>Custom Network Access</key>
+	<string>自定义网络访问</string>
+	<key>Custom manifest-defined profile.</key>
+	<string>由自定义清单定义的配置方案。</string>
+	<key>Custom…</key>
+	<string>自定义…</string>
+	<key>Database</key>
+	<string>数据库</string>
+	<key>Declaration digest</key>
+	<string>声明摘要</string>
+	<key>Declared Permissions</key>
+	<string>已声明的权限</string>
+	<key>Declared by the plugin</key>
+	<string>由插件声明</string>
+	<key>Declared network</key>
+	<string>已声明的网络访问</string>
+	<key>Declared purpose</key>
+	<string>声明用途</string>
+	<key>Declared: %@</key>
+	<string>已声明：%@</string>
+	<key>Decline</key>
+	<string>拒绝</string>
+	<key>Default setting</key>
+	<string>默认设置</string>
+	<key>Default tool requirements</key>
+	<string>默认工具需求</string>
+	<key>Degraded</key>
+	<string>性能下降</string>
+	<key>Delete</key>
+	<string>删除</string>
+	<key>Delete %@?</key>
+	<string>删除“%@”？</string>
+	<key>Delete Tunnel</key>
+	<string>删除隧道</string>
+	<key>Denied</key>
+	<string>已拒绝</string>
+	<key>Deny</key>
+	<string>拒绝</string>
+	<key>Dependency ID</key>
+	<string>依赖标识</string>
+	<key>Dependency names must be unique.</key>
+	<string>依赖标识不能重复。</string>
+	<key>Dependency unavailable</key>
+	<string>依赖不可用</string>
+	<key>Desktop</key>
+	<string>桌面</string>
+	<key>Desktop Control</key>
+	<string>桌面控制</string>
+	<key>Diagnostics</key>
+	<string>诊断</string>
+	<key>Different entry</key>
+	<string>条目不同</string>
+	<key>Disable</key>
+	<string>停用</string>
+	<key>Disabled</key>
+	<string>已关闭</string>
+	<key>Discard</key>
+	<string>放弃</string>
+	<key>Discard and Reload</key>
+	<string>放弃并重新加载</string>
+	<key>Discard unsaved draft changes and reload?</key>
+	<string>要放弃未保存的草稿更改并重新加载吗？</string>
+	<key>Discard unsaved draft changes?</key>
+	<string>要放弃未保存的草稿更改吗？</string>
+	<key>Discovery does not install packages or grant access.</key>
+	<string>搜索不会安装插件包或授予权限。</string>
+	<key>Documents</key>
+	<string>文稿</string>
+	<key>Don't Allow</key>
+	<string>不允许</string>
+	<key>Done</key>
+	<string>完成</string>
+	<key>Download and install</key>
+	<string>下载并安装</string>
+	<key>Download tunnel-client</key>
+	<string>下载 tunnel-client</string>
+	<key>Downloading, checking and installing…</key>
+	<string>正在下载、检查并安装…</string>
+	<key>Downloads</key>
+	<string>下载</string>
+	<key>Drag Computer MCP.app into the app list</key>
+	<string>将 Computer MCP.app 拖入应用列表</string>
+	<key>Drag into the app list</key>
+	<string>拖入应用列表</string>
+	<key>Drag this app into the Screen &amp; System Audio Recording list, then turn it on.</key>
+	<string>将此应用拖入“屏幕与系统音频录制”列表，然后将其开启。</string>
+	<key>Each client runs the App-owned bridge. Changes to a client's settings are shown for review first.</key>
+	<string>每个客户端都运行由应用管理的桥接。修改客户端设置前会先显示更改供您检查。</string>
+	<key>Each connection needs approval on this Mac before programs can run without the sandbox.</key>
+	<string>每个连接都需要在这台 Mac 上获得批准，程序才能在沙盒外运行。</string>
+	<key>Each row is one exact argument. No rows means no arguments. Do not enter secrets.</key>
+	<string>每行原样传入一个参数。没有行表示不传参数。请勿填写密钥。</string>
+	<key>Edit</key>
+	<string>编辑</string>
+	<key>Edit ChatGPT connection</key>
+	<string>编辑 ChatGPT 连接</string>
+	<key>Edit Cloudflare Tunnel</key>
+	<string>编辑 Cloudflare 隧道</string>
+	<key>Edit Cloudflare connection</key>
+	<string>编辑 Cloudflare 连接</string>
+	<key>Edit MCP</key>
+	<string>编辑 MCP</string>
+	<key>Edit Tunnel</key>
+	<string>编辑隧道</string>
+	<key>Edit owner policy for %@</key>
+	<string>编辑“%@”的所有者策略</string>
+	<key>Edit permissions on the source project to change access for its worktrees.</key>
+	<string>请在源项目中编辑权限，以更改其工作树的访问权限。</string>
+	<key>Edit settings</key>
+	<string>编辑设置</string>
+	<key>Edit the TOML policy. Press Command-S to save.</key>
+	<string>编辑 TOML 策略。按 Command-S 保存。</string>
+	<key>Edit the shared client profile to change its permissions.</key>
+	<string>请编辑共享客户端配置以更改其权限。</string>
+	<key>Edit…</key>
+	<string>编辑…</string>
+	<key>Effective Limits</key>
+	<string>实际生效的限制</string>
+	<key>Effective access: %@</key>
+	<string>实际访问权限：%@</string>
+	<key>Elevated</key>
+	<string>较高风险</string>
+	<key>Enable</key>
+	<string>启用</string>
+	<key>Enabled</key>
+	<string>已启用</string>
+	<key>Enable…</key>
+	<string>启用…</string>
+	<key>End access</key>
+	<string>结束访问</string>
+	<key>Enter a TOML policy to set limits for this owner.</key>
+	<string>输入 TOML 策略，为此所有者设置限制。</string>
+	<key>Enter one host per line or separate hosts with commas. Use *. to include subdomains.</key>
+	<string>每行输入一个主机，或用逗号分隔。使用 *. 前缀以包含子域名。</string>
+	<key>Enter valid host names or IP addresses for custom network access.</key>
+	<string>请为自定义网络访问输入有效的主机名或 IP 地址。</string>
+	<key>Environment (JSON object)</key>
+	<string>环境变量（JSON 对象）</string>
+	<key>Environment: %@</key>
+	<string>环境变量：%@</string>
+	<key>Every permission returns to Ask, and running programs that depend on them end.</key>
+	<string>所有权限恢复为“询问”，依赖这些权限的运行中程序会结束。</string>
+	<key>Executable</key>
+	<string>可执行文件</string>
+	<key>Executable needs verification</key>
+	<string>可执行文件有待验证</string>
+	<key>Executable unavailable</key>
+	<string>可执行文件不可用</string>
+	<key>Executed on demand through cli.exec.</key>
+	<string>通过 cli.exec 按需执行。</string>
+	<key>Execution</key>
+	<string>执行方式</string>
+	<key>Execution Context</key>
+	<string>执行情境</string>
+	<key>Execution Time</key>
+	<string>执行时长</string>
+	<key>Execution blocked</key>
+	<string>执行已被阻止</string>
+	<key>Execution blocked for %@</key>
+	<string>%@的执行已被阻止</string>
+	<key>Execution unavailable</key>
+	<string>无法执行</string>
+	<key>Execution unavailable for %@</key>
+	<string>%@无法执行</string>
+	<key>Execution: Full Access</key>
+	<string>执行方式：完全访问</string>
+	<key>Execution: Sandbox</key>
+	<string>执行方式：沙盒</string>
+	<key>Expired</key>
+	<string>已过期</string>
+	<key>Expires %@</key>
+	<string>%@过期</string>
+	<key>Explicit whitelist</key>
+	<string>明确白名单</string>
+	<key>Explore Dashboard</key>
+	<string>浏览控制台</string>
+	<key>Export</key>
+	<string>导出</string>
+	<key>Export Diagnostics</key>
+	<string>导出诊断信息</string>
+	<key>Exposure</key>
+	<string>暴露方式</string>
+	<key>External</key>
+	<string>外部</string>
+	<key>External dependencies are not installed. Use an earlier source in the plugin details to roll back.</key>
+	<string>不会安装外部依赖。如需回滚，请在插件详情中选择先前版本。</string>
+	<key>External dependencies are user-managed. Host services do not grant local administration.</key>
+	<string>外部依赖由用户管理，宿主服务不授予本地管理权限。</string>
+	<key>External executables</key>
+	<string>外部可执行程序</string>
+	<key>Fail</key>
+	<string>失败</string>
+	<key>Failed</key>
+	<string>失败</string>
+	<key>File and interpreter checks passed; actual startup has not been verified.</key>
+	<string>文件与解释器检查通过，尚未验证实际启动。</string>
+	<key>File checks do not confirm a working integration.</key>
+	<string>文件检查不能证明集成已完整可用。</string>
+	<key>Files &amp; Folders</key>
+	<string>文件与文件夹</string>
+	<key>Files &amp; Folders: %@</key>
+	<string>文件和文件夹：%@</string>
+	<key>Filter audit</key>
+	<string>筛选审计</string>
+	<key>Finish local MCP setup</key>
+	<string>完成本地 MCP 设置</string>
+	<key>Folder grants and persistent bookmark health</key>
+	<string>文件夹授权与持久书签健康状态</string>
+	<key>For trusted stdio adapters only. Calls retain this connection's project and grants; local approval authority is not delegated.</key>
+	<string>仅适用于可信的标准输入输出适配器。调用沿用当前连接的项目和授权，不会获得本机审批权。</string>
+	<key>Foreground</key>
+	<string>前台</string>
+	<key>Found in host PATH</key>
+	<string>在宿主 PATH 中找到</string>
+	<key>Found in installed application</key>
+	<string>在已安装应用中找到</string>
+	<key>Full Access</key>
+	<string>完全访问</string>
+	<key>Full Access Allowed</key>
+	<string>允许完全访问</string>
+	<key>Full Access for This Connection</key>
+	<string>仅本次连接完全访问</string>
+	<key>Full Access for This Session</key>
+	<string>本次会话完全访问</string>
+	<key>Full Access is turned on from a client's or plugin's page, and needs your confirmation on this Mac.</key>
+	<string>完全访问需要在客户端或插件的页面中开启，并在这台 Mac 上确认。</string>
+	<key>Full Access plugins run outside the sandbox as your user account.</key>
+	<string>拥有完全访问权限的插件在沙盒外以你的用户身份运行。</string>
+	<key>Full Access runs this provider outside the sandbox with direct access to your Mac as your user account. Sandbox network and read-exception restrictions do not apply.</key>
+	<string>“完全访问”会在沙盒之外以你的用户账户身份直接运行此提供方并访问这台 Mac。沙盒网络与读取例外限制将不适用。</string>
+	<key>Full access</key>
+	<string>完全访问</string>
+	<key>Gateway</key>
+	<string>网关</string>
+	<key>Gateway Manifest</key>
+	<string>网关清单</string>
+	<key>Gateway calls</key>
+	<string>网关调用</string>
+	<key>Gateway failed to start</key>
+	<string>网关启动失败</string>
+	<key>Gateway is running</key>
+	<string>网关正在运行</string>
+	<key>Gateway is stopped</key>
+	<string>网关已停止</string>
+	<key>Gateway profile</key>
+	<string>网关配置方案</string>
+	<key>Gateway runtime and local data plane</key>
+	<string>网关运行状态与本地数据平面</string>
+	<key>Gateway state changing</key>
+	<string>网关状态正在变化</string>
+	<key>Gateway state is changing</key>
+	<string>网关状态正在变化</string>
+	<key>Generate a new Computer MCP Access Token</key>
+	<string>生成新的 Computer MCP 访问令牌</string>
+	<key>Generated</key>
+	<string>生成时间</string>
+	<key>Get Started</key>
+	<string>开始使用</string>
+	<key>GitHub request failed with HTTP %@.</key>
+	<string>GitHub 请求失败，HTTP 状态码为 %@。</string>
+	<key>Give Full Access</key>
+	<string>给予完全访问</string>
+	<key>Give Full Access…</key>
+	<string>授予完全访问权限…</string>
+	<key>Give “%@” Full Access?</key>
+	<string>给“%@”完全访问？</string>
+	<key>HTTP bearer authentication</key>
+	<string>HTTP Bearer 认证</string>
+	<key>HTTP only. Bind the exact server URL and save these settings, then use Manage credential to store the token. An endpoint change requires a new binding; redirects are rejected.</key>
+	<string>仅适用于 HTTP。绑定完整服务器地址并保存设置，再通过“管理凭据”保存令牌。地址变更需要重新绑定；不接受重定向。</string>
+	<key>HTTP proxy</key>
+	<string>HTTP 代理</string>
+	<key>Headers: %@</key>
+	<string>请求头：%@</string>
+	<key>High</key>
+	<string>高风险</string>
+	<key>Home</key>
+	<string>首页</string>
+	<key>Host Default</key>
+	<string>宿主默认值</string>
+	<key>Host authorization cleanup is unconfirmed</key>
+	<string>宿主授权清理尚未确认</string>
+	<key>Host binding</key>
+	<string>宿主绑定</string>
+	<key>Host compatibility</key>
+	<string>宿主兼容性</string>
+	<key>Host risk classifications (JSON object)</key>
+	<string>宿主风险分类（JSON 对象）</string>
+	<key>Host session is active</key>
+	<string>宿主会话活跃</string>
+	<key>Hosted in the gateway process.</key>
+	<string>托管在网关进程中。</string>
+	<key>Hosts</key>
+	<string>主机</string>
+	<key>I understand and consent on this Mac to run this provider with Full Access.</key>
+	<string>我了解并同意在这台 Mac 上以“完全访问”模式运行此提供方。</string>
+	<key>Include trusted hosts</key>
+	<string>包含可信主机</string>
+	<key>Independent OpenAI Secure MCP and Cloudflare named tunnel lifecycles</key>
+	<string>相互独立的 OpenAI Secure MCP 与 Cloudflare 命名隧道生命周期</string>
+	<key>Inherited from project %@</key>
+	<string>继承自项目%@</string>
+	<key>Input %@</key>
+	<string>输入摘要 %@</string>
+	<key>Install</key>
+	<string>安装</string>
+	<key>Install Command Line Tool</key>
+	<string>安装命令行工具</string>
+	<key>Install OpenAI tunnel-client</key>
+	<string>安装 OpenAI tunnel-client</string>
+	<key>Install archive</key>
+	<string>安装归档包</string>
+	<key>Install cloudflared</key>
+	<string>安装 cloudflared</string>
+	<key>Install cloudflared from Cloudflare and run the check again.</key>
+	<string>安装 Cloudflare 提供的 cloudflared，然后重新检查。</string>
+	<key>Install the App-owned CLI</key>
+	<string>安装由应用管理的 CLI</string>
+	<key>Install the signed embedded CLI before registering a local MCP client.</key>
+	<string>注册本地 MCP 客户端前，请先安装已签名的内嵌 CLI。</string>
+	<key>Install the signed embedded bridge before registering a local MCP client.</key>
+	<string>注册本地 MCP 客户端前，请先安装已签名的内嵌桥接 CLI。</string>
+	<key>Install tunnel-client from OpenAI and run the check again.</key>
+	<string>安装 OpenAI 提供的 tunnel-client，然后重新检查。</string>
+	<key>Installation location occupied</key>
+	<string>安装位置已被占用</string>
+	<key>Installed</key>
+	<string>已安装</string>
+	<key>Installed archive</key>
+	<string>已安装的归档包</string>
+	<key>Intel</key>
+	<string>Intel 处理器</string>
+	<key>Invalid TOML</key>
+	<string>TOML 无效</string>
+	<key>Invalid plugin request. Check repository identity, tag, query length and page bounds.</key>
+	<string>插件请求无效。请检查仓库标识、发布标签、搜索长度及页码范围。</string>
+	<key>It now shows: %@.</key>
+	<string>当前状态：%@。</string>
+	<key>Keep Draft on Current Revision</key>
+	<string>保留草稿并采用当前版本</string>
+	<key>Keychain account</key>
+	<string>钥匙串账户</string>
+	<key>Last error</key>
+	<string>最近错误</string>
+	<key>Last export</key>
+	<string>最近导出</string>
+	<key>Last used %@</key>
+	<string>最近使用：%@</string>
+	<key>Latest compatible stable release</key>
+	<string>最新兼容的稳定版本</string>
+	<key>Launch at login</key>
+	<string>登录时启动</string>
+	<key>Leave blank to follow the macOS HTTPS or HTTP proxy. Credentials are not allowed.</key>
+	<string>留空以跟随 macOS 的 HTTPS 或 HTTP 代理。不允许包含凭据。</string>
+	<key>Leave blank to use the configured provider or PATH.</key>
+	<string>留空以使用已配置的提供方或 PATH。</string>
+	<key>Leave the API key blank to keep the existing Keychain value.</key>
+	<string>API 密钥留空即可保留钥匙串中的现有值。</string>
+	<key>Load Built-in Defaults</key>
+	<string>载入内置默认值</string>
+	<key>Load release</key>
+	<string>加载发布版本</string>
+	<key>Loaded from official catalog</key>
+	<string>已从官方目录读取</string>
+	<key>Loading ChatGPT connections</key>
+	<string>正在加载 ChatGPT 连接</string>
+	<key>Loading Cloudflare connections</key>
+	<string>正在加载 Cloudflare 连接</string>
+	<key>Loading Cloudflare tunnels</key>
+	<string>正在加载 Cloudflare 隧道</string>
+	<key>Loading OpenAI tunnels</key>
+	<string>正在加载 OpenAI 隧道</string>
+	<key>Loading Owner Policy…</key>
+	<string>正在加载所有者策略…</string>
+	<key>Loading audit log</key>
+	<string>正在加载审计日志</string>
+	<key>Loading gateway status</key>
+	<string>正在加载网关状态</string>
+	<key>Loading plugins</key>
+	<string>正在加载插件</string>
+	<key>Loading profiles</key>
+	<string>正在加载配置方案</string>
+	<key>Loading projects</key>
+	<string>正在加载项目</string>
+	<key>Loading providers</key>
+	<string>正在加载提供方</string>
+	<key>Loading redacted Cloudflare logs</key>
+	<string>正在加载脱敏后的 Cloudflare 日志</string>
+	<key>Loading redacted Tunnel logs</key>
+	<string>正在加载脱敏后的隧道日志</string>
+	<key>Loading release archives</key>
+	<string>正在加载发布归档包</string>
+	<key>Local Admin</key>
+	<string>本地管理员</string>
+	<key>Local App and CLI administration. Never exposed through a Tunnel.</key>
+	<string>本地应用与 CLI 管理，绝不通过隧道暴露。</string>
+	<key>Local CLI</key>
+	<string>本机命令行</string>
+	<key>Local MCP</key>
+	<string>本机 MCP</string>
+	<key>Local MCP Server</key>
+	<string>本地 MCP 服务器</string>
+	<key>Local MCP client</key>
+	<string>本机 MCP 客户端</string>
+	<key>Local MCP registrations do not include a permission manifest. Permissions default to Ask unless granted below.</key>
+	<string>本地 MCP 注册不包含权限清单。除非在下方另行授予，否则所有权限均默认为“询问”。</string>
+	<key>Local Network</key>
+	<string>本地网络</string>
+	<key>Local command line</key>
+	<string>本机命令行</string>
+	<key>Local data plane</key>
+	<string>本地数据面</string>
+	<key>Local development</key>
+	<string>本地开发</string>
+	<key>Local only</key>
+	<string>仅限本地</string>
+	<key>Local process</key>
+	<string>本地进程</string>
+	<key>Local socket</key>
+	<string>本地套接字</string>
+	<key>Logs</key>
+	<string>日志</string>
+	<key>Loopback origin 127.0.0.1:%@ · metrics 127.0.0.1:%@</key>
+	<string>本地回环源 127.0.0.1:%@ · 指标 127.0.0.1:%@</string>
+	<key>Low</key>
+	<string>低风险</string>
+	<key>MCP</key>
+	<string>MCP</string>
+	<key>MCP Registrations</key>
+	<string>MCP 注册</string>
+	<key>MCP Servers</key>
+	<string>MCP 服务器</string>
+	<key>MCP credentials require an exact endpoint binding using HTTPS or loopback HTTP, and a valid Keychain account.</key>
+	<string>MCP 凭据必须绑定完整的 HTTPS 或本机回环 HTTP 地址，并使用有效的钥匙串账户。</string>
+	<key>MCP enabled</key>
+	<string>启用 MCP 集成</string>
+	<key>MCP server</key>
+	<string>MCP 服务器</string>
+	<key>Machine Information</key>
+	<string>设备信息</string>
+	<key>Machine Policy</key>
+	<string>机器策略</string>
+	<key>Make a test MCP request</key>
+	<string>发起一次测试 MCP 请求</string>
+	<key>Manage MCP</key>
+	<string>管理 MCP</string>
+	<key>Manage credential</key>
+	<string>管理凭据</string>
+	<key>Managed Limits</key>
+	<string>托管限制</string>
+	<key>Managed limits cap what can be granted here. A source that can't be read limits everything it could limit until it can be read.</key>
+	<string>托管限制决定这里最多能授予什么。无法读取的来源，在能读取之前，会把它可以限制的设置全部按最严处理。</string>
+	<key>Managed limits prevent Full Access.</key>
+	<string>受管限制禁止完全访问。</string>
+	<key>Managed limits restrict these choices.</key>
+	<string>受管限制缩小了此处的可选范围。</string>
+	<key>Manifest</key>
+	<string>清单</string>
+	<key>Manifest SHA-256</key>
+	<string>清单 SHA-256</string>
+	<key>Manual registration</key>
+	<string>手动注册</string>
+	<key>Memory</key>
+	<string>内存</string>
+	<key>Metrics port</key>
+	<string>指标端口</string>
+	<key>Missing</key>
+	<string>缺失</string>
+	<key>Named tunnel</key>
+	<string>命名隧道</string>
+	<key>Named tunnel credentials are incomplete</key>
+	<string>命名隧道凭据不完整</string>
+	<key>Named tunnel credentials are ready</key>
+	<string>命名隧道凭据已就绪</string>
+	<key>Named-tunnel token</key>
+	<string>命名隧道令牌</string>
+	<key>Need help?</key>
+	<string>需要帮助？</string>
+	<key>Needs a Computer MCP update</key>
+	<string>需要更新 Computer MCP</string>
+	<key>Needs a plugin update</key>
+	<string>需要更新插件</string>
+	<key>Needs attention</key>
+	<string>需要处理</string>
+	<key>Network</key>
+	<string>网络</string>
+	<key>Network Volumes</key>
+	<string>网络宗卷</string>
+	<key>Network: %@</key>
+	<string>网络：%@</string>
+	<key>Network: Any Host</key>
+	<string>网络：任意主机</string>
+	<key>Network: None</key>
+	<string>网络：无</string>
+	<key>Network: Trusted Hosts</key>
+	<string>网络：可信主机</string>
+	<key>Network: Trusted Hosts and %@</key>
+	<string>网络：可信主机及 %@</string>
+	<key>New command</key>
+	<string>新命令</string>
+	<key>New connections can restore Full Access only while the approved permissions remain unchanged. Revoke to require your approval again.</key>
+	<string>仅当已批准的权限保持不变时，新连接才能恢复完全访问权限。撤销后需要再次由您批准。</string>
+	<key>New connections use this profile. Existing connections keep their current profile; active work is not stopped.</key>
+	<string>新连接将使用此配置方案。现有连接保留当前方案，进行中的工作不会停止。</string>
+	<key>New plugins start disabled. Updates keep host settings and earlier versions. External dependencies are not installed.</key>
+	<string>新插件默认停用。更新会保留宿主设置和先前版本，不会安装外部依赖。</string>
+	<key>Next page</key>
+	<string>下一页</string>
+	<key>Next step</key>
+	<string>下一步</string>
+	<key>No Policy Ceiling</key>
+	<string>策略未设上限</string>
+	<key>No approval</key>
+	<string>未批准</string>
+	<key>No audit entries</key>
+	<string>没有审计条目</string>
+	<key>No clients or plugins are connected yet.</key>
+	<string>还没有客户端或插件连接。</string>
+	<key>No clients or plugins have asked for this permission.</key>
+	<string>还没有客户端或插件请求此权限。</string>
+	<key>No clients, plugins, or local servers are available.</key>
+	<string>没有可用的客户端、插件或本地服务器。</string>
+	<key>No connected clients</key>
+	<string>没有已连接的客户端</string>
+	<key>No current end-to-end request has been observed</key>
+	<string>尚未观察到本次端到端请求</string>
+	<key>No diagnostic checks were returned.</key>
+	<string>未返回诊断检查结果。</string>
+	<key>No executable was resolved for this dependency. Follow its setup instructions or set a host binding.</key>
+	<string>未能为此依赖找到可执行文件，请按依赖说明配置，或在宿主中绑定路径。</string>
+	<key>No installable archives on this release page.</key>
+	<string>本发布页没有可安装的归档包。</string>
+	<key>No matching audit entries</key>
+	<string>没有匹配的审计条目</string>
+	<key>No matching plugins.</key>
+	<string>没有匹配的插件。</string>
+	<key>No named tunnels configured</key>
+	<string>尚未配置命名隧道</string>
+	<key>No output.</key>
+	<string>没有输出。</string>
+	<key>No plugins registered</key>
+	<string>尚未注册插件</string>
+	<key>No policy is saved for this owner.</key>
+	<string>此所有者尚未保存策略。</string>
+	<key>No profile allows Cloudflare tunnel connections. Allow them in a profile to approve this request.</key>
+	<string>没有配置方案允许 Cloudflare 隧道连接。请先在配置方案中允许此类连接，再批准该请求。</string>
+	<key>No profiles configured</key>
+	<string>尚未配置配置方案</string>
+	<key>No project is registered</key>
+	<string>尚未注册项目</string>
+	<key>No providers configured</key>
+	<string>尚未配置提供方</string>
+	<key>No readable saved policy for this owner.</key>
+	<string>此所有者没有可读取的已保存策略。</string>
+	<key>No registered projects</key>
+	<string>没有已注册的项目</string>
+	<key>No resolvable read exceptions.</key>
+	<string>没有可解析的读取例外。</string>
+	<key>No selected or bundled source is available. Select an installed source or register a package.</key>
+	<string>没有可用的所选来源或内置来源，请选择已安装的来源或注册插件包。</string>
+	<key>No specific tool requirements declared.</key>
+	<string>未声明特定的工具需求。</string>
+	<key>No tools selected</key>
+	<string>未选择工具</string>
+	<key>No tunnels configured</key>
+	<string>尚未配置隧道</string>
+	<key>None</key>
+	<string>无</string>
+	<key>Normal App use does not require a TOML file.</key>
+	<string>正常使用应用不需要 TOML 文件。</string>
+	<key>Not Allowed</key>
+	<string>未允许</string>
+	<key>Not Requested</key>
+	<string>未请求</string>
+	<key>Not Set</key>
+	<string>未设置</string>
+	<key>Not allowed by %@</key>
+	<string>%@不允许</string>
+	<key>Not allowed while %@ can't be read</key>
+	<string>无法读取%@时不允许</string>
+	<key>Not applicable</key>
+	<string>不适用</string>
+	<key>Not available for this Mac</key>
+	<string>不适用于这台 Mac</string>
+	<key>Not checked</key>
+	<string>未检查</string>
+	<key>Not configured</key>
+	<string>未配置</string>
+	<key>Not connected</key>
+	<string>未连接</string>
+	<key>Not installed</key>
+	<string>未安装</string>
+	<key>Not installed, or its command didn't respond.</key>
+	<string>未安装，或其命令没有响应。</string>
+	<key>Not loaded</key>
+	<string>尚未加载</string>
+	<key>Not registered</key>
+	<string>未注册</string>
+	<key>Not resolved</key>
+	<string>未找到</string>
+	<key>Not verified</key>
+	<string>未验证</string>
+	<key>Not verified: tool execution, remote profile permissions, system permissions and persistent host services.</key>
+	<string>未验证：工具执行、远程配置权限、系统权限及持久化宿主服务。</string>
+	<key>OK</key>
+	<string>好</string>
+	<key>Observe</key>
+	<string>观察</string>
+	<key>Official plugin search</key>
+	<string>官方插件搜索</string>
+	<key>Official source identifies the publisher, not a verified artifact or signature. Discovery does not install packages or grant access.</key>
+	<string>官方来源用于确认发布者，不代表安装包或签名已通过验证。搜索不会安装插件包或授予权限。</string>
+	<key>Only This Time</key>
+	<string>仅这一次</string>
+	<key>Only This Time covers the retried request and the program it starts.</key>
+	<string>“仅这一次”只对这次重试及其启动的程序有效。</string>
+	<key>Only grant raw arguments to a trusted CLI. Structured command trees reject this setting.</key>
+	<string>仅为可信命令行程序授权任意参数。结构化命令树不接受此设置。</string>
+	<key>Only this installation's owned files will be removed. Host settings, other versions and external dependencies will be kept.</key>
+	<string>只移除此安装记录所属的文件，保留宿主设置、其他版本和外部依赖。</string>
+	<key>Only this reviewed record will be retired. No process or downstream action will be started.</key>
+	<string>仅清理这条已查看的记录，不会启动进程或执行下游操作。</string>
+	<key>Open</key>
+	<string>打开</string>
+	<key>Open %@ once, then try again.</key>
+	<string>请先打开一次 %@，然后再试。</string>
+	<key>Open Advanced Diagnostics</key>
+	<string>打开高级诊断</string>
+	<key>Open ChatGPT</key>
+	<string>打开 ChatGPT</string>
+	<key>Open Cloudflare install documentation</key>
+	<string>打开 Cloudflare 安装文档</string>
+	<key>Open Cloudflare installation documentation</key>
+	<string>打开 Cloudflare 安装文档</string>
+	<key>Open Computer MCP</key>
+	<string>打开 Computer MCP</string>
+	<key>Open Computer MCP and inspect the command line tool installation.</key>
+	<string>打开 Computer MCP 并检查命令行工具安装状态。</string>
+	<key>Open Diagnostics</key>
+	<string>打开诊断</string>
+	<key>Open Diagnostics for the latest failure.</key>
+	<string>打开“诊断”查看最近一次失败。</string>
+	<key>Open OpenAI MCP documentation</key>
+	<string>打开 OpenAI MCP 文档</string>
+	<key>Open OpenAI setup documentation</key>
+	<string>打开 OpenAI 设置文档</string>
+	<key>Open System Settings</key>
+	<string>打开系统设置</string>
+	<key>Open pinned declaration</key>
+	<string>查看固定提交的清单</string>
+	<key>OpenAI</key>
+	<string>OpenAI</string>
+	<key>OpenAI API key</key>
+	<string>OpenAI API 密钥</string>
+	<key>OpenAI Secure MCP connection</key>
+	<string>OpenAI Secure MCP 连接</string>
+	<key>OpenAI Secure MCP setup, lifecycle, and real-request verification</key>
+	<string>OpenAI Secure MCP 设置、生命周期与真实请求验证</string>
+	<key>OpenAI Tunnel diagnostics failed</key>
+	<string>OpenAI 隧道诊断失败</string>
+	<key>OpenAI tunnel-client is available</key>
+	<string>OpenAI tunnel-client 可用</string>
+	<key>OpenAI tunnel-client is unavailable</key>
+	<string>OpenAI tunnel-client 不可用</string>
+	<key>Opens the %@ setup page</key>
+	<string>打开%@设置页面</string>
+	<key>Operation Failed</key>
+	<string>操作失败</string>
+	<key>Optional</key>
+	<string>可选</string>
+	<key>Optional initial permissions</key>
+	<string>可选初始权限</string>
+	<key>Origin port</key>
+	<string>源站端口</string>
+	<key>Other MCP clients</key>
+	<string>其他 MCP 客户端</string>
+	<key>Other principals’ host tools and sandboxed programs cannot read files in the plugin’s sandbox container. Files in shared projects follow the project’s permissions.</key>
+	<string>其他主体的宿主工具和沙盒程序无法读取该插件沙盒容器中的文件。共享项目中的文件遵循项目权限。</string>
+	<key>Outbound Network</key>
+	<string>出站网络</string>
+	<key>Output</key>
+	<string>输出</string>
+	<key>Outstanding calls may have an unknown outcome. Reconnect and inspect before retrying.</key>
+	<string>未完成调用的结果可能不明。重新连接后，请先核验结果再决定是否重试。</string>
+	<key>Override process arguments</key>
+	<string>自定义启动参数</string>
+	<key>Owner Policy</key>
+	<string>所有者策略</string>
+	<key>Owner Policy for %@</key>
+	<string>“%@”的所有者策略</string>
+	<key>Owner policies are saved in Computer MCP. Use the machine policy file or configuration profile to manage limits for this Mac.</key>
+	<string>所有者策略保存在 Computer MCP 中。请使用本机策略文件或配置描述文件管理这台 Mac 的限制。</string>
+	<key>Owner policy cannot be read.</key>
+	<string>无法读取所有者策略。</string>
+	<key>Owner policy draft</key>
+	<string>所有者策略草稿</string>
+	<key>Owner policy requires confirmation.</key>
+	<string>需要确认所有者策略。</string>
+	<key>Package checks finished</key>
+	<string>插件包检查已结束</string>
+	<key>Package files and saved host settings will be kept.</key>
+	<string>将保留插件包文件和已保存的宿主设置。</string>
+	<key>Packages that contribute MCP, CLI, and skills</key>
+	<string>组合 MCP、命令行与技能的插件包</string>
+	<key>Pass</key>
+	<string>通过</string>
+	<key>Passed</key>
+	<string>通过</string>
+	<key>Permission Source</key>
+	<string>权限来源</string>
+	<key>Permission outside plugin declarations</key>
+	<string>此权限不在插件声明范围内</string>
+	<key>Permission review required</key>
+	<string>需要审查权限</string>
+	<key>Permission source unavailable</key>
+	<string>权限来源不可用</string>
+	<key>Permissions</key>
+	<string>权限</string>
+	<key>Permissions are paused</key>
+	<string>权限已暂停</string>
+	<key>Permissions for selected tools, projects, and connections</key>
+	<string>配置工具、项目和连接的权限</string>
+	<key>Permissions were restored from an earlier state. Review and confirm them before enabling.</key>
+	<string>权限已从较早的状态恢复。启用前请重新审查并确认。</string>
+	<key>Permissions…</key>
+	<string>权限…</string>
+	<key>Plugin</key>
+	<string>插件</string>
+	<key>Plugin Declaration</key>
+	<string>插件声明</string>
+	<key>Plugin ID</key>
+	<string>插件标识</string>
+	<key>Plugin Package</key>
+	<string>插件包</string>
+	<key>Plugin declaration allows at most %@</key>
+	<string>插件声明最多允许%@</string>
+	<key>Plugin execution mode is set when you review its declarations.</key>
+	<string>插件的执行模式在审查其声明时设置。</string>
+	<key>Plugin file recovery could not finish. Check the App-owned storage and retry recovery.</key>
+	<string>插件文件恢复未能完成。请检查应用管理的存储目录后重试恢复。</string>
+	<key>Plugin file recovery is incomplete. Missing, unverified or still-referenced directories require attention.</key>
+	<string>插件文件恢复尚未完成。请检查缺失、无法验证或仍被引用的目录。</string>
+	<key>Plugin installed</key>
+	<string>插件已安装</string>
+	<key>Plugin request failed with HTTP %@.</key>
+	<string>插件请求失败，HTTP 状态码为 %@。</string>
+	<key>Plugin settings</key>
+	<string>插件设置</string>
+	<key>Plugin settings changed. Close and reopen this window before installing.</key>
+	<string>插件设置已变更。请关闭并重新打开此窗口后再安装。</string>
+	<key>Plugin settings changed. Reload before applying this change.</key>
+	<string>插件设置已变更。请重新打开编辑窗口，核对后再保存。</string>
+	<key>Plugins</key>
+	<string>插件</string>
+	<key>Policy Source</key>
+	<string>策略来源</string>
+	<key>Policy Source Changed</key>
+	<string>策略来源已更改</string>
+	<key>Policy cleared. Reload to see the current limits.</key>
+	<string>策略已清除。重新加载即可查看当前限制。</string>
+	<key>Policy contains malformed, unsupported or unavailable settings.</key>
+	<string>策略包含格式错误、不受支持或不可用的设置。</string>
+	<key>Policy saved. Reload to see the current limits.</key>
+	<string>策略已保存。重新加载即可查看当前限制。</string>
+	<key>Policy source snapshot is missing or ambiguous.</key>
+	<string>策略来源的快照缺失或不明确。</string>
+	<key>Prepare the App-owned CLI bridge for local MCP clients.</key>
+	<string>为本地 MCP 客户端准备由应用管理的 CLI 桥接。</string>
+	<key>Preparing local MCP command</key>
+	<string>正在准备本地 MCP 命令</string>
+	<key>Prerelease</key>
+	<string>预发布版本</string>
+	<key>Prerequisites</key>
+	<string>运行前提</string>
+	<key>Preserve downstream tool names</key>
+	<string>保留下游工具原名</string>
+	<key>Previous MCP cleanup is unconfirmed. Review the process records before starting another connection.</key>
+	<string>之前的 MCP 清理尚未确认。请先查看进程记录，再启动连接。</string>
+	<key>Previous page</key>
+	<string>上一页</string>
+	<key>Previous results are shown below; the latest request failed.</key>
+	<string>最近一次请求失败，下面保留此前的结果。</string>
+	<key>Privacy &amp; Security</key>
+	<string>隐私与安全性</string>
+	<key>Process ID</key>
+	<string>进程 ID</string>
+	<key>Process cleanup needs recovery</key>
+	<string>进程清理需要恢复</string>
+	<key>Process has stopped</key>
+	<string>进程已停止</string>
+	<key>Process record is damaged</key>
+	<string>进程记录已损坏</string>
+	<key>Process record recovered. Check the connection again when ready; no process was started.</key>
+	<string>进程记录已恢复。准备好后可再次检查连接；本次未启动进程。</string>
+	<key>Profile</key>
+	<string>权限方案</string>
+	<key>Profile ID</key>
+	<string>配置方案 ID</string>
+	<key>Profile grants are unchanged. A registration cannot grant itself permissions.</key>
+	<string>权限配置的授权保持不变，注册不能自行获取权限。</string>
+	<key>Profile revision: %@ · Permission revision: %@</key>
+	<string>配置修订号：%@ · 权限修订号：%@</string>
+	<key>Profiles</key>
+	<string>配置方案</string>
+	<key>Programs may use Full access with client consent.</key>
+	<string>程序可在客户端获得同意后使用完全访问。</string>
+	<key>Programs run as you without the sandbox. They don't inherit Computer MCP's macOS permissions.</key>
+	<string>程序以你的身份运行，不经过沙盒，也不继承 Computer MCP 的 macOS 权限。</string>
+	<key>Programs run in the sandbox and change projects only in worktrees.</key>
+	<string>程序在沙盒中运行，只在 worktree 中修改项目。</string>
+	<key>Programs run in the sandbox.</key>
+	<string>程序在沙盒中运行。</string>
+	<key>Project</key>
+	<string>项目</string>
+	<key>Project-scoped tools can use the registered folder grants.</key>
+	<string>项目范围的工具可以使用已注册的文件夹授权。</string>
+	<key>Project: None</key>
+	<string>项目：无</string>
+	<key>Project: Read</key>
+	<string>项目：只读</string>
+	<key>Project: Read &amp; Write</key>
+	<string>项目：读写</string>
+	<key>Projects</key>
+	<string>项目</string>
+	<key>Provider '%@' has no independent doctor contract.</key>
+	<string>提供方“%@”没有独立的诊断命令契约。</string>
+	<key>Provider '%@' is configuration-driven and starts on demand with the gateway.</key>
+	<string>提供方“%@”由配置驱动，并随网关按需启动。</string>
+	<key>Provider '%@' is configuration-driven. Disable it in the active manifest.</key>
+	<string>提供方“%@”由配置驱动。请在当前清单中将其禁用。</string>
+	<key>Provider diagnostics failed</key>
+	<string>提供方诊断失败</string>
+	<key>Provider source unavailable</key>
+	<string>提供方来源不可用</string>
+	<key>Providers</key>
+	<string>提供方</string>
+	<key>Provision or update the tunnel-client profile</key>
+	<string>预配或更新 tunnel-client 配置方案</string>
+	<key>Public hostname</key>
+	<string>公共主机名</string>
+	<key>Publish the access-token-protected gateway through your named tunnel.</key>
+	<string>通过命名隧道发布由访问令牌保护的网关。</string>
+	<key>Published %@</key>
+	<string>发布于 %@</string>
+	<key>Publisher ID</key>
+	<string>发布者标识</string>
+	<key>Query the macOS unified log, which can reveal activity on this Mac.</key>
+	<string>查询 macOS 统一日志，其中可能记录这台 Mac 上的活动。</string>
+	<key>Quick Tunnel and unauthenticated origins are not supported for this journey.</key>
+	<string>此连接路径不支持 Quick Tunnel 或未认证源站。</string>
+	<key>Quit %@, then try again.</key>
+	<string>请退出 %@，然后再试。</string>
+	<key>Quit Computer MCP</key>
+	<string>退出 Computer MCP</string>
+	<key>Read</key>
+	<string>读取</string>
+	<key>Read &amp; Write</key>
+	<string>读写</string>
+	<key>Read system, network and service status.</key>
+	<string>读取系统、网络和服务状态。</string>
+	<key>Read the skill library.</key>
+	<string>读取技能库。</string>
+	<key>Read-Only</key>
+	<string>只读</string>
+	<key>Read-only observation, Skills, system state, and project inspection.</key>
+	<string>只读观察、技能、系统状态和项目检查。</string>
+	<key>Readiness check unavailable</key>
+	<string>就绪检查不可用</string>
+	<key>Reading skills does not execute scripts or grant tool access.</key>
+	<string>读取技能不会执行脚本，也不会授予工具权限。</string>
+	<key>Ready</key>
+	<string>已就绪</string>
+	<key>Received</key>
+	<string>接收时间</string>
+	<key>Reconnect Tunnel</key>
+	<string>重新连接隧道</string>
+	<key>Reconnect attempt %@</key>
+	<string>第 %@ 次重连</string>
+	<key>Recover released record</key>
+	<string>恢复已释放记录</string>
+	<key>Recovery requires released process locks and confirmed host authorization cleanup. Damaged or unconfirmed records remain blocked.</key>
+	<string>恢复要求进程锁已释放，并且宿主授权清理已确认。损坏或未确认的记录仍会阻止启动。</string>
+	<key>Redacted capability decisions and execution outcomes</key>
+	<string>已脱敏的能力决策与执行结果</string>
+	<key>Reexport tools</key>
+	<string>对外暴露工具</string>
+	<key>Refresh</key>
+	<string>刷新</string>
+	<key>Refresh catalog</key>
+	<string>刷新目录</string>
+	<key>Refresh registration</key>
+	<string>刷新注册</string>
+	<key>Refresh the App, gateway, and configured transports.</key>
+	<string>刷新应用、网关和已配置的传输链路。</string>
+	<key>Refreshing</key>
+	<string>正在刷新</string>
+	<key>Register a project before checking a connection.</key>
+	<string>请先注册项目，再检查连接。</string>
+	<key>Register providers in the active configuration before starting them.</key>
+	<string>启动前，请先在当前配置中注册提供方。</string>
+	<key>Registration ID</key>
+	<string>注册标识</string>
+	<key>Registration diagnostics</key>
+	<string>注册诊断</string>
+	<key>Registration will be disabled.</key>
+	<string>此注册将被禁用。</string>
+	<key>Registration will be enabled.</key>
+	<string>此注册将被启用。</string>
+	<key>Release</key>
+	<string>发布版本</string>
+	<key>Release ID</key>
+	<string>发布版本 ID</string>
+	<key>Release tag</key>
+	<string>发布标签</string>
+	<key>Reload</key>
+	<string>重新加载</string>
+	<key>Reload Now</key>
+	<string>立即重新加载</string>
+	<key>Reload Required</key>
+	<string>需要重新加载</string>
+	<key>Remote MCP client</key>
+	<string>远程 MCP 客户端</string>
+	<key>Remote connections</key>
+	<string>远程连接</string>
+	<key>Remotely managed named tunnels only. The App owns the access-token-protected loopback origin.</key>
+	<string>仅支持远程管理的命名隧道。应用管理由访问令牌保护的本地回环源。</string>
+	<key>Removable Volumes</key>
+	<string>可移除宗卷</string>
+	<key>Remove</key>
+	<string>移除</string>
+	<key>Remove %@</key>
+	<string>移除%@</string>
+	<key>Remove %@?</key>
+	<string>移除“%@”？</string>
+	<key>Remove Computer MCP from %@?</key>
+	<string>从 %@ 中移除 Computer MCP？</string>
+	<key>Remove argument</key>
+	<string>移除参数</string>
+	<key>Remove binding</key>
+	<string>移除绑定</string>
+	<key>Remove credential</key>
+	<string>删除凭据</string>
+	<key>Remove local registration?</key>
+	<string>移除本地注册？</string>
+	<key>Remove project grant</key>
+	<string>移除项目授权</string>
+	<key>Remove registration</key>
+	<string>移除注册</string>
+	<key>Removed from %@</key>
+	<string>已从 %@ 移除</string>
+	<key>Remove…</key>
+	<string>移除…</string>
+	<key>Reopen Claude Desktop.</key>
+	<string>重新打开 Claude Desktop。</string>
+	<key>Repair %@</key>
+	<string>修复 %@</string>
+	<key>Repair Project</key>
+	<string>修复项目</string>
+	<key>Repair…</key>
+	<string>修复…</string>
+	<key>Replace Draft</key>
+	<string>替换草稿</string>
+	<key>Replace OpenAI API key</key>
+	<string>替换 OpenAI API 密钥</string>
+	<key>Replace named-tunnel token</key>
+	<string>替换命名隧道令牌</string>
+	<key>Replace the editor content with the built-in manifest</key>
+	<string>用内置清单替换编辑器内容</string>
+	<key>Repository ID</key>
+	<string>仓库标识</string>
+	<key>Request %@</key>
+	<string>请求 %@</string>
+	<key>Request ID</key>
+	<string>请求 ID</string>
+	<key>Requested: %@</key>
+	<string>请求权限：%@</string>
+	<key>Requests</key>
+	<string>请求</string>
+	<key>Required for pointer, keyboard, scroll, and Accessibility actions.</key>
+	<string>指针、键盘、滚动和辅助功能操作需要此权限。</string>
+	<key>Required for window observation and screenshots.</key>
+	<string>窗口观察和截屏需要此权限。</string>
+	<key>Requires approval</key>
+	<string>需要批准</string>
+	<key>Requires connection approval</key>
+	<string>需要批准连接</string>
+	<key>Reset path</key>
+	<string>重置路径</string>
+	<key>Resolved %@</key>
+	<string>已解析 %@</string>
+	<key>Resolved component</key>
+	<string>已解析的组件</string>
+	<key>Resolved file: %@</key>
+	<string>已解析文件：%@</string>
+	<key>Resolved folder: %@</key>
+	<string>已解析文件夹：%@</string>
+	<key>Resolved registrations do not confirm a working connection. Caller permissions still apply.</key>
+	<string>解析成功不代表连接可用。调用方仍须具备相应权限。</string>
+	<key>Result unknown</key>
+	<string>结果未知</string>
+	<key>Result unknown — refresh to check</key>
+	<string>结果未知，请刷新确认</string>
+	<key>Results for</key>
+	<string>搜索条件</string>
+	<key>Retained Output</key>
+	<string>保留的输出</string>
+	<key>Retention</key>
+	<string>保留时长</string>
+	<key>Retry</key>
+	<string>重试</string>
+	<key>Retry All Checks</key>
+	<string>重试所有检查</string>
+	<key>Retry file recovery</key>
+	<string>重试文件恢复</string>
+	<key>Returns to</key>
+	<string>返回至</string>
+	<key>Revert</key>
+	<string>还原</string>
+	<key>Review</key>
+	<string>检查</string>
+	<key>Review Current Source</key>
+	<string>查看当前来源</string>
+	<key>Review MCP change</key>
+	<string>核对 MCP 变更</string>
+	<key>Review Permissions…</key>
+	<string>审查权限…</string>
+	<key>Review Provider Enablement</key>
+	<string>审查提供方启用</string>
+	<key>Review changes…</key>
+	<string>审查变更…</string>
+	<key>Review exactly what changes. Nothing is written until you confirm.</key>
+	<string>请核对具体更改。确认前不会写入任何内容。</string>
+	<key>Review required</key>
+	<string>需要审查</string>
+	<key>Review the change before applying it.</key>
+	<string>请先检查更改再应用。</string>
+	<key>Revision</key>
+	<string>修订号</string>
+	<key>Revision %@ will be validated and activated. Existing connections and running tasks will be preserved.</key>
+	<string>将验证并启用修订版本 %@。现有连接和正在运行的任务将保留。</string>
+	<key>Revoke</key>
+	<string>撤销</string>
+	<key>Revoke All Access</key>
+	<string>撤销全部权限</string>
+	<key>Revoke All Access…</key>
+	<string>撤销全部权限…</string>
+	<key>Revoke all access for “%@”?</key>
+	<string>撤销“%@”的全部权限？</string>
+	<key>Revoking access ends work that uses it.</key>
+	<string>撤销访问权限会终止使用该权限的工作。</string>
+	<key>Revoking ends a client's sign-in immediately. It must ask for your approval again to reconnect.</key>
+	<string>撤销会立即结束该客户端的登录，它需要再次获得您的批准才能重新连接。</string>
+	<key>Roll Back</key>
+	<string>回滚</string>
+	<key>Roll back configuration?</key>
+	<string>回滚配置？</string>
+	<key>Roll back to this revision</key>
+	<string>回滚到此修订版本</string>
+	<key>Run Diagnostics</key>
+	<string>运行诊断</string>
+	<key>Run Tunnel Diagnostics</key>
+	<string>运行隧道诊断</string>
+	<key>Run programs without the sandbox, as you, in any directory. Host tools still check every permission.</key>
+	<string>在任意目录以你的身份运行程序，不经过沙盒。宿主工具仍会检查每项权限。</string>
+	<key>Running</key>
+	<string>运行中</string>
+	<key>Running diagnostics</key>
+	<string>正在运行诊断</string>
+	<key>Runtime checks and redacted support bundle</key>
+	<string>运行时检查与脱敏支持包</string>
+	<key>Runtime version</key>
+	<string>运行时版本</string>
+	<key>SHA-256</key>
+	<string>SHA-256 摘要</string>
+	<key>Safe system tools remain available. Add a project before using project-scoped tools.</key>
+	<string>安全的系统工具仍然可用。使用项目范围工具前，请先添加项目。</string>
+	<key>Same as %1$@ (%2$@)</key>
+	<string>与%1$@相同（%2$@）</string>
+	<key>Sandbox</key>
+	<string>沙盒</string>
+	<key>Sandbox Network</key>
+	<string>沙盒网络</string>
+	<key>Sandbox Read Exceptions</key>
+	<string>沙盒读取例外</string>
+	<key>Sandbox and Full Access (%@)</key>
+	<string>沙盒与完全访问（%@）</string>
+	<key>Sandbox container</key>
+	<string>沙盒容器</string>
+	<key>Sandboxed local servers use a private container for their state.</key>
+	<string>沙盒中的本地服务器将其状态保存在专用容器中。</string>
+	<key>Save</key>
+	<string>保存</string>
+	<key>Save the OpenAI Tunnel API key in Computer MCP. It will remain in Keychain.</key>
+	<string>在 Computer MCP 中保存 OpenAI Tunnel API 密钥。它会保留在钥匙串中。</string>
+	<key>Save the named-tunnel token and generate a Computer MCP Access Token.</key>
+	<string>保存命名隧道令牌，并生成 Computer MCP 访问令牌。</string>
+	<key>Saved</key>
+	<string>已保存</string>
+	<key>Saved Policy Source</key>
+	<string>已保存的策略来源</string>
+	<key>Saved Tunnel profiles require different gateway profiles. Start only compatible Tunnels.</key>
+	<string>已保存的隧道配置方案使用不同的网关配置方案。请只启动相互兼容的隧道。</string>
+	<key>Saved by the owner</key>
+	<string>由所有者保存</string>
+	<key>Saved client approvals</key>
+	<string>已保存的客户端授权</string>
+	<key>Saved permissions are revoked and running programs that depend on them end.</key>
+	<string>已保存的授权将被撤销，依赖这些授权的程序将结束。</string>
+	<key>Scoped host services</key>
+	<string>受限宿主服务</string>
+	<key>Screen</key>
+	<string>屏幕</string>
+	<key>Screen Recording</key>
+	<string>屏幕录制</string>
+	<key>Search</key>
+	<string>搜索</string>
+	<key>Search names, descriptions, or repositories</key>
+	<string>搜索名称、描述或仓库</string>
+	<key>Search official plugins</key>
+	<string>搜索官方插件</string>
+	<key>Search published official plugins. Results are filtered for this Mac.</key>
+	<string>搜索已发布的官方插件，结果按这台 Mac 的兼容性筛选。</string>
+	<key>Search, filters and pages use the cached catalog.</key>
+	<string>搜索、筛选和翻页使用本地缓存目录。</string>
+	<key>Searching official catalog</key>
+	<string>正在搜索官方目录</string>
+	<key>Secure Tunnel</key>
+	<string>安全隧道</string>
+	<key>Selected</key>
+	<string>已选择</string>
+	<key>Selected by</key>
+	<string>由以下变量指定</string>
+	<key>Selected package and declaration identity were validated.</key>
+	<string>已验证所选插件包及清单身份。</string>
+	<key>Selected tools only</key>
+	<string>仅选定工具</string>
+	<key>Server URL</key>
+	<string>服务地址</string>
+	<key>Server version</key>
+	<string>服务器版本</string>
+	<key>Set by %@</key>
+	<string>由“%@”设置</string>
+	<key>Settings can't be read</key>
+	<string>无法读取设置</string>
+	<key>Settings file</key>
+	<string>设置文件</string>
+	<key>Settings link unavailable</key>
+	<string>设置链接不可用</string>
+	<key>Shared profile: %@</key>
+	<string>共享配置：%@</string>
+	<key>Show %@ in Finder</key>
+	<string>在访达中显示%@</string>
+	<key>Show Cloudflare logs</key>
+	<string>显示 Cloudflare 日志</string>
+	<key>Show Tunnel logs</key>
+	<string>显示隧道日志</string>
+	<key>Show Welcome</key>
+	<string>显示欢迎页</string>
+	<key>Show in Finder</key>
+	<string>在访达中显示</string>
+	<key>Showing bounded log tails</key>
+	<string>正在显示限定长度的日志末尾</string>
+	<key>Sign-in for clients such as claude.ai</key>
+	<string>供 claude.ai 等客户端登录</string>
+	<key>Sign-in requests</key>
+	<string>登录请求</string>
+	<key>Sign-in requests waiting: %@</key>
+	<string>等待批准的登录请求：%@</string>
+	<key>Signed-in remote clients</key>
+	<string>已登录的远程客户端</string>
+	<key>Skills</key>
+	<string>技能</string>
+	<key>Skills enabled</key>
+	<string>启用技能</string>
+	<key>Socket</key>
+	<string>套接字</string>
+	<key>Some catalog data is unavailable. Review the details below.</key>
+	<string>部分目录数据不可用，请查看下方详情。</string>
+	<key>Some package checks failed</key>
+	<string>部分插件包检查失败</string>
+	<key>Source</key>
+	<string>来源</string>
+	<key>Source details</key>
+	<string>来源详情</string>
+	<key>Source digest</key>
+	<string>来源摘要</string>
+	<key>Source repository</key>
+	<string>来源仓库</string>
+	<key>Source review required</key>
+	<string>需要审查来源</string>
+	<key>Source revision %@</key>
+	<string>来源版本 %@</string>
+	<key>Source: %@</key>
+	<string>来源：%@</string>
+	<key>Sources</key>
+	<string>来源</string>
+	<key>Standard error</key>
+	<string>标准错误</string>
+	<key>Standard output</key>
+	<string>标准输出</string>
+	<key>Start</key>
+	<string>启动</string>
+	<key>Start Gateway</key>
+	<string>启动网关</string>
+	<key>Start Tunnel</key>
+	<string>启动隧道</string>
+	<key>Start a new Claude Code session.</key>
+	<string>启动新的 Claude Code 会话。</string>
+	<key>Start a new Codex session.</key>
+	<string>启动新的 Codex 会话。</string>
+	<key>Start the Gateway before connecting an MCP consumer.</key>
+	<string>连接 MCP 消费者前，请先启动网关。</string>
+	<key>Start the gateway</key>
+	<string>启动网关</string>
+	<key>Started</key>
+	<string>启动时间</string>
+	<key>Starting</key>
+	<string>正在启动</string>
+	<key>State</key>
+	<string>状态</string>
+	<key>Static capability boundaries for local and remote callers</key>
+	<string>本地与远程调用方的静态能力边界</string>
+	<key>Status</key>
+	<string>状态</string>
+	<key>Stop</key>
+	<string>停止</string>
+	<key>Stop Gateway</key>
+	<string>停止网关</string>
+	<key>Stopped</key>
+	<string>已停止</string>
+	<key>Stopping</key>
+	<string>正在停止</string>
+	<key>Streamable HTTP</key>
+	<string>流式 HTTP</string>
+	<key>Support</key>
+	<string>支持</string>
+	<key>Switching to Full Access clears this server’s saved sandbox settings.</key>
+	<string>切换到完全访问会清除该服务器已保存的沙盒设置。</string>
+	<key>System permissions</key>
+	<string>系统权限</string>
+	<key>TCC permissions are checked without prompting.</key>
+	<string>TCC 权限检查不会触发系统提示。</string>
+	<key>Take screenshots and read windows, displays and accessibility information.</key>
+	<string>截屏，读取窗口、显示器和辅助功能信息。</string>
+	<key>The App owns the gateway process; tunnel-client connects through its local bridge.</key>
+	<string>应用管理网关进程；tunnel-client 通过本地桥接连接。</string>
+	<key>The App's embedded plugin archive worker is unavailable. Check the App installation; no PATH executable was used.</key>
+	<string>应用内置的归档检查程序不可用。请检查应用安装；未使用 PATH 中的其他程序。</string>
+	<key>The App-owned CLI link is installed and its directory is on PATH.</key>
+	<string>由应用管理的 CLI 链接已安装，其目录也位于 PATH 中。</string>
+	<key>The App-owned CLI link is installed. Add ~/.local/bin to PATH to use it by name.</key>
+	<string>由应用管理的 CLI 链接已安装。将 ~/.local/bin 添加到 PATH 后即可按名称调用。</string>
+	<key>The MCP bearer token must be nonempty printable ASCII without whitespace, at most 16 KiB.</key>
+	<string>MCP Bearer 令牌必须为不含空白的非空可打印 ASCII，且不超过 16 KiB。</string>
+	<key>The MCP credential is missing. Save it through the host before connecting.</key>
+	<string>缺少 MCP 凭据。请先通过宿主保存，再连接。</string>
+	<key>The catalog cache could not be read or saved. Current results remain available in this process.</key>
+	<string>无法读取或保存目录缓存；当前结果在本次运行中仍可使用。</string>
+	<key>The change couldn't be made.</key>
+	<string>无法完成更改。</string>
+	<key>The change couldn't be saved to %@'s settings.</key>
+	<string>无法将更改保存到 %@ 的设置。</string>
+	<key>The configured or discovered cloudflared executable is available.</key>
+	<string>已配置或自动发现的 cloudflared 可执行文件可用。</string>
+	<key>The configured or discovered tunnel-client executable is available.</key>
+	<string>已配置或自动发现的 tunnel-client 可执行文件可用。</string>
+	<key>The current saved source can't be read.</key>
+	<string>无法读取当前保存的来源。</string>
+	<key>The current user cannot execute this file.</key>
+	<string>当前用户无法执行此文件。</string>
+	<key>The declaration excludes this host version or architecture. Select a compatible package.</key>
+	<string>清单不支持当前宿主版本或架构，请选择兼容的插件包。</string>
+	<key>The declaration permits this host version and architecture.</key>
+	<string>清单允许当前宿主版本与架构。</string>
+	<key>The declared Skills directory passed package path validation. Skill contents and scripts were not executed.</key>
+	<string>声明的技能目录已通过插件包路径验证，未执行技能内容或脚本。</string>
+	<key>The embedded computer-mcp bridge executable is missing. Reinstall Computer MCP.app.</key>
+	<string>缺少内嵌的 computer-mcp 桥接可执行文件。请重新安装 Computer MCP.app。</string>
+	<key>The executable header could not be safely read; check access and retry.</key>
+	<string>无法安全读取可执行文件头，请检查访问权限后重试。</string>
+	<key>The executable path does not identify a regular file.</key>
+	<string>可执行文件路径未指向普通文件。</string>
+	<key>The executable path is empty, too long or contains NUL.</key>
+	<string>可执行文件路径为空、过长或含有 NUL 字符。</string>
+	<key>The executable was not found in the configured location or launch search path.</key>
+	<string>在配置位置或启动搜索路径中未找到可执行文件。</string>
+	<key>The existing entry uses settings Computer MCP couldn't restore if replacing it failed. Remove it in %@ first.</key>
+	<string>现有条目包含替换失败时 Computer MCP 无法还原的设置。请先在 %@ 中移除它。</string>
+	<key>The host cannot access the MCP credential. Check the App's Keychain identity and unlock state.</key>
+	<string>宿主无法访问 MCP 凭据。请检查应用的钥匙串身份和解锁状态。</string>
+	<key>The journey becomes Verified only when the audit event matches this tunnel, profile, caller identity, and current start time.</key>
+	<string>仅当审计事件与此隧道、配置方案、调用方身份及本次启动时间匹配时，此路径才会变为“已验证”。</string>
+	<key>The local Computer MCP control plane is not connected. Runtime integration must inject an AppControlPlane implementation.</key>
+	<string>本地 Computer MCP 控制平面未连接。运行时集成必须注入 AppControlPlane 实现。</string>
+	<key>The local MCP bridge and remote transports depend on the App-owned gateway.</key>
+	<string>本地 MCP 桥接和远程传输都依赖由应用管理的网关。</string>
+	<key>The local Tunnel profile and its Keychain API key will be removed. The OpenAI Tunnel registration is not deleted.</key>
+	<string>本地隧道配置方案及其钥匙串 API 密钥将被移除。OpenAI 隧道注册不会被删除。</string>
+	<key>The local named-tunnel profile and its Keychain secrets will be removed. The Cloudflare account tunnel remains user-owned.</key>
+	<string>本地命名隧道配置方案及其钥匙串凭据将被移除。Cloudflare 账号中的隧道仍归用户所有。</string>
+	<key>The managed tunnel process is running.</key>
+	<string>受管隧道进程正在运行。</string>
+	<key>The named-tunnel token and Computer MCP Access Token are stored in Keychain.</key>
+	<string>命名隧道令牌和 Computer MCP 访问令牌已存储在钥匙串中。</string>
+	<key>The official catalog could not be refreshed. Previously verified discovery data is shown.</key>
+	<string>官方目录刷新失败，正在显示此前核验的目录数据。</string>
+	<key>The operation failed. Open Diagnostics for technical details.</key>
+	<string>操作失败。请打开“诊断”查看技术细节。</string>
+	<key>The operation was cancelled. Check the selected source before retrying.</key>
+	<string>操作已取消。重试前请先检查当前选中的来源。</string>
+	<key>The owner-only local control socket is responding.</key>
+	<string>仅限当前用户的本地控制套接字正常响应。</string>
+	<key>The owner-only local gateway socket is accepting connections.</key>
+	<string>仅限当前用户的本地网关套接字正在接受连接。</string>
+	<key>The permission store is older than the authority already used, for example after a restore from a backup. Review the permissions below, then confirm them to resume.</key>
+	<string>权限存储比已经使用过的授权更旧，例如从备份恢复之后。请检查下面的权限，确认后恢复使用。</string>
+	<key>The permissions changed while you were editing. Review them and try again.</key>
+	<string>权限在你编辑时发生了变化。请检查后重试。</string>
+	<key>The plugin catalog is busy. Try again shortly.</key>
+	<string>插件目录正忙，请稍后重试。</string>
+	<key>The plugin catalog response exceeded its size limit.</key>
+	<string>插件目录响应超过大小限制。</string>
+	<key>The plugin publisher has limited requests. Wait before trying again.</key>
+	<string>插件发布方限制了请求，请稍后重试。</string>
+	<key>The plugin publisher is unavailable. Check the connection and try again.</key>
+	<string>插件发布方暂时不可用，请检查网络连接后重试。</string>
+	<key>The plugin publisher requested authentication. Public plugin requests do not use host credentials.</key>
+	<string>插件发布方要求身份验证；公开插件请求不会使用宿主凭据。</string>
+	<key>The plugin publisher returned an invalid catalog response.</key>
+	<string>插件发布方返回的目录响应无效。</string>
+	<key>The plugin publisher, repository, release or catalog revision does not match the verified source.</key>
+	<string>插件发布方、仓库、发布版本或目录版本与已核验的来源不一致。</string>
+	<key>The plugin request timed out. Check the connection and try again.</key>
+	<string>插件请求超时，请检查网络连接后重试。</string>
+	<key>The plugin request was refused because its destination is not allowed.</key>
+	<string>插件请求的目标地址不在允许范围内，已拒绝访问。</string>
+	<key>The previous entry couldn't be restored. Check %@'s settings.</key>
+	<string>无法还原原来的条目，请检查 %@ 的设置。</string>
+	<key>The previous entry was restored.</key>
+	<string>已还原原来的条目。</string>
+	<key>The profile for this sign-in changed. Review it and approve again.</key>
+	<string>此登录请求的配置方案已变化，请重新检查后再批准。</string>
+	<key>The provider source changed since your previous approval. Review and confirm its permissions before enabling.</key>
+	<string>自上次批准以来，此提供方的来源已发生变化。启用前请重新审查并确认其权限。</string>
+	<key>The registration is disabled; no connection was started.</key>
+	<string>此注册已禁用，未启动连接。</string>
+	<key>The registration will be removed. External dependencies are retained.</key>
+	<string>此注册将被移除，外部依赖会保留。</string>
+	<key>The repository's plugin declaration is invalid.</key>
+	<string>仓库中的插件清单无效。</string>
+	<key>The request is correlated with the current gateway or tunnel start boundary.</key>
+	<string>该请求已与当前网关或隧道的启动边界关联。</string>
+	<key>The required credential is stored in Keychain or this profile does not require one.</key>
+	<string>所需凭据已存储在钥匙串中，或此配置方案不需要凭据。</string>
+	<key>The saved policy has no readable limits.</key>
+	<string>已保存的策略没有可读取的限制。</string>
+	<key>The saved policy sets no limits for this context.</key>
+	<string>已保存的策略未对此情境设置限制。</string>
+	<key>The script has an invalid interpreter declaration for macOS.</key>
+	<string>脚本的解释器声明在 macOS 上无效。</string>
+	<key>The selected MCP did not complete connection and catalog discovery. Check the launch configuration, endpoint authentication and system permissions.</key>
+	<string>所选 MCP 未完成连接和目录发现。请检查启动配置、端点认证及系统权限。</string>
+	<key>The selected MCP initialized and returned its tool catalog. Tool execution and production permissions were not checked.</key>
+	<string>所选 MCP 已初始化并返回工具目录。尚未检查工具执行和生产权限。</string>
+	<key>The token is stored only in the host Keychain. New requests read the current value; changing it does not cancel already issued requests.</key>
+	<string>令牌仅保存在宿主钥匙串中。新请求读取当前值；更改凭据不会取消已发出的请求。</string>
+	<key>The transport is healthy. Send a real request to verify it.</key>
+	<string>传输链路运行正常。发送一次真实请求进行验证。</string>
+	<key>These ceilings combine the applicable policy sources. Grants and individual connections can restrict access further.</key>
+	<string>这些上限综合了适用的策略来源。授权和单个连接可进一步限制访问。</string>
+	<key>This Mac</key>
+	<string>这台 Mac</string>
+	<key>This Session</key>
+	<string>仅此会话</string>
+	<key>This client can run commands and access files, processes, the network, and credentials available to your macOS user. A project does not limit this access. macOS privacy permissions still apply.</key>
+	<string>此客户端可以运行命令，并访问您的 macOS 用户可访问的文件、进程、网络和凭据。项目不会限制此权限范围，macOS 隐私权限仍然有效。</string>
+	<key>This client or plugin is no longer available.</key>
+	<string>此客户端或插件已不可用。</string>
+	<key>This connection type is not allowed by its profile. Review the connection permissions to allow it.</key>
+	<string>此配置尚未允许该连接类型，请检查连接权限并明确选择是否允许。</string>
+	<key>This declared path could not be resolved automatically. Choose an existing local path to allow it, or leave it off.</key>
+	<string>无法自动解析此声明的路径。请选择一个现有的本地路径以允许访问，或保持关闭。</string>
+	<key>This interpreter invocation needs further verification; no script or probe was executed.</key>
+	<string>此解释器调用仍需进一步验证，本次文件检查未执行脚本或探测程序。</string>
+	<key>This local MCP server runs in its own provider sandbox container when Sandbox is selected, using the permissions, network access, and read exceptions approved here.</key>
+	<string>选择“沙盒”时，此本地 MCP 服务器会在其独立的提供方沙盒容器中运行，并使用此处批准的权限、网络访问和读取例外。</string>
+	<key>This network access exceeds the reviewed limits.</key>
+	<string>此网络访问超出审查范围。</string>
+	<key>This network access is not allowed by the managed limits.</key>
+	<string>受管限制不允许此网络访问。</string>
+	<key>This package does not declare additional permissions.</key>
+	<string>此插件包未声明额外的权限。</string>
+	<key>This permission does not provide a System Settings deep link.</key>
+	<string>此权限没有可用的“系统设置”深层链接。</string>
+	<key>This plugin isn't available for this Mac</key>
+	<string>此插件没有适用于这台 Mac 的版本</string>
+	<key>This plugin needs an update</key>
+	<string>此插件需要更新</string>
+	<key>This principal is no longer available.</key>
+	<string>此客户端、插件或本地服务器已不可用。</string>
+	<key>This profile has no allowed callers.</key>
+	<string>此配置档案没有获准的调用方。</string>
+	<key>This removes the local project grant. It does not delete the folder or its contents.</key>
+	<string>这会移除本地项目授权，但不会删除文件夹或其中内容。</string>
+	<key>This sign-in request expired. Ask the client to sign in again.</key>
+	<string>此登录请求已过期，请让客户端重新登录。</string>
+	<key>This source limits everything it could limit until it can be read.</key>
+	<string>在恢复读取前，此来源会阻止其管控范围内的所有访问。</string>
+	<key>Through %@</key>
+	<string>经由 %@</string>
+	<key>Tool exposure</key>
+	<string>工具暴露方式</string>
+	<key>Tool names, one per line</key>
+	<string>工具名称，每行一个</string>
+	<key>Tool prefix</key>
+	<string>工具前缀</string>
+	<key>Transport</key>
+	<string>传输</string>
+	<key>Trusted Hosts</key>
+	<string>受信任的主机</string>
+	<key>Trusted Hosts and %@</key>
+	<string>可信主机及 %@</string>
+	<key>Trusted hosts</key>
+	<string>受信任的主机</string>
+	<key>Tunnel %@ · %@</key>
+	<string>隧道 %@ · %@</string>
+	<key>Tunnel '%@' is already running with profile %@. Stop it before starting %@.</key>
+	<string>隧道“%@”正使用配置方案 %@ 运行。请先停止它，再启动 %@。</string>
+	<key>Tunnel '%@' is configured to stay running with profile %@. Stop it before activating %@.</key>
+	<string>隧道“%@”已配置为持续使用配置方案 %@ 运行。请先停止它，再激活 %@。</string>
+	<key>Tunnel ID</key>
+	<string>隧道 ID</string>
+	<key>Tunnel Logs</key>
+	<string>隧道日志</string>
+	<key>Tunnel client profile</key>
+	<string>隧道客户端配置方案</string>
+	<key>Tunnel credential is missing</key>
+	<string>缺少隧道凭据</string>
+	<key>Tunnel credential is ready</key>
+	<string>隧道凭据已就绪</string>
+	<key>Tunnel diagnostics failed.</key>
+	<string>隧道诊断失败。</string>
+	<key>Tunnel eligible</key>
+	<string>可用于隧道</string>
+	<key>Tunnel failed</key>
+	<string>隧道失败</string>
+	<key>Tunnel gateway profile must be chatgpt-observe or chatgpt-operate.</key>
+	<string>隧道网关配置方案必须为 chatgpt-observe 或 chatgpt-operate。</string>
+	<key>Tunnel is not running</key>
+	<string>隧道未运行</string>
+	<key>Tunnel is running</key>
+	<string>隧道正在运行</string>
+	<key>Tunnel provisioning failed.</key>
+	<string>隧道预配失败。</string>
+	<key>Tunnel state is changing</key>
+	<string>隧道状态正在变化</string>
+	<key>Tunnels</key>
+	<string>隧道</string>
+	<key>Turn on Computer MCP for %@.</key>
+	<string>为 Computer MCP 开启%@权限。</string>
+	<key>Turn on Computer MCP under Accessibility.</key>
+	<string>在“辅助功能”中开启 Computer MCP。</string>
+	<key>Turn on Computer MCP under Screen &amp; System Audio Recording.</key>
+	<string>在“屏幕与系统音频录制”中开启 Computer MCP。</string>
+	<key>Unable to activate manifest</key>
+	<string>无法激活清单</string>
+	<key>Unable to activate profile</key>
+	<string>无法激活配置方案</string>
+	<key>Unable to delete Cloudflare Tunnel</key>
+	<string>无法删除 Cloudflare 隧道</string>
+	<key>Unable to delete tunnel</key>
+	<string>无法删除隧道</string>
+	<key>Unable to export diagnostics</key>
+	<string>无法导出诊断信息</string>
+	<key>Unable to install command line tool</key>
+	<string>无法安装命令行工具</string>
+	<key>Unable to open System Settings</key>
+	<string>无法打开系统设置</string>
+	<key>Unable to provision tunnel</key>
+	<string>无法预配隧道</string>
+	<key>Unable to reconnect tunnel</key>
+	<string>无法重新连接隧道</string>
+	<key>Unable to register project</key>
+	<string>无法注册项目</string>
+	<key>Unable to remove project</key>
+	<string>无法移除项目</string>
+	<key>Unable to repair project</key>
+	<string>无法修复项目</string>
+	<key>Unable to request %@</key>
+	<string>无法请求%@权限</string>
+	<key>Unable to roll back manifest</key>
+	<string>无法回滚清单</string>
+	<key>Unable to save Cloudflare Tunnel</key>
+	<string>无法保存 Cloudflare 隧道</string>
+	<key>Unable to save tunnel</key>
+	<string>无法保存隧道</string>
+	<key>Unable to select project</key>
+	<string>无法选择项目</string>
+	<key>Unable to start Cloudflare Tunnel</key>
+	<string>无法启动 Cloudflare 隧道</string>
+	<key>Unable to start Computer MCP</key>
+	<string>无法启动 Computer MCP</string>
+	<key>Unable to start gateway</key>
+	<string>无法启动网关</string>
+	<key>Unable to start provider</key>
+	<string>无法启动提供方</string>
+	<key>Unable to start tunnel</key>
+	<string>无法启动隧道</string>
+	<key>Unable to stop Cloudflare Tunnel</key>
+	<string>无法停止 Cloudflare 隧道</string>
+	<key>Unable to stop gateway</key>
+	<string>无法停止网关</string>
+	<key>Unable to stop provider</key>
+	<string>无法停止提供方</string>
+	<key>Unable to stop tunnel</key>
+	<string>无法停止隧道</string>
+	<key>Unable to update launch at login</key>
+	<string>无法更新登录时启动设置</string>
+	<key>Unable to update project access</key>
+	<string>无法更新项目访问权限</string>
+	<key>Unavailable</key>
+	<string>不可用</string>
+	<key>Unbounded</key>
+	<string>无上限</string>
+	<key>Unified Logs</key>
+	<string>统一日志</string>
+	<key>Uninstall</key>
+	<string>卸载</string>
+	<key>Uninstall this archive?</key>
+	<string>卸载此归档包？</string>
+	<key>Unknown Tunnel profile: %@</key>
+	<string>未知隧道配置方案：%@</string>
+	<key>Unknown gateway profile: %@</key>
+	<string>未知网关配置方案：%@</string>
+	<key>Unknown macOS permission: %@</key>
+	<string>未知 macOS 权限：%@</string>
+	<key>Update</key>
+	<string>更新</string>
+	<key>Update Computer MCP in %@?</key>
+	<string>更新 %@ 中的 Computer MCP？</string>
+	<key>Update Computer MCP to use this plugin</key>
+	<string>更新 Computer MCP 后才能使用此插件</string>
+	<key>Updated Computer MCP in %@</key>
+	<string>已更新 %@ 中的 Computer MCP</string>
+	<key>Update…</key>
+	<string>更新…</string>
+	<key>Use</key>
+	<string>使用</string>
+	<key>Use Folder</key>
+	<string>使用文件夹</string>
+	<key>Use Sandbox</key>
+	<string>使用沙盒</string>
+	<key>Use bundled fallback</key>
+	<string>恢复内置来源</string>
+	<key>Use sandbox</key>
+	<string>使用沙盒</string>
+	<key>Use the MCP servers you registered.</key>
+	<string>使用你登记的 MCP 服务器。</string>
+	<key>Use the keyboard and pointer, perform accessibility actions and open files in apps. This acts on your whole desktop, outside any sandbox.</key>
+	<string>使用键盘和指针、执行辅助功能操作、在应用中打开文件。它作用于整个桌面，不受沙盒限制。</string>
+	<key>Use the tools and skills that plugins contribute.</key>
+	<string>使用插件提供的工具和技能。</string>
+	<key>Use this source</key>
+	<string>使用此来源</string>
+	<key>Use wildcard setting (%@)</key>
+	<string>使用通配设置（%@）</string>
+	<key>Uses the default project network setting</key>
+	<string>使用默认项目网络设置</string>
+	<key>Uses the package's startup arguments.</key>
+	<string>使用插件包的默认启动参数。</string>
+	<key>Validate and Activate</key>
+	<string>验证并激活</string>
+	<key>Verification details</key>
+	<string>验证详情</string>
+	<key>Verified</key>
+	<string>已验证</string>
+	<key>Verified by a real successful request</key>
+	<string>已由真实成功请求验证</string>
+	<key>Verify the remote connection</key>
+	<string>验证远程连接</string>
+	<key>Verify with a real request</key>
+	<string>使用真实请求验证</string>
+	<key>Version</key>
+	<string>版本</string>
+	<key>Version %@</key>
+	<string>版本 %@</string>
+	<key>Wait for the Gateway to finish changing state, then run the check again.</key>
+	<string>等待网关完成状态变更，然后重新检查。</string>
+	<key>Wait for the tunnel to finish changing state, then run the check again.</key>
+	<string>等待隧道完成状态变更，然后重新检查。</string>
+	<key>Waiting for process cleanup</key>
+	<string>等待进程清理</string>
+	<key>Warning</key>
+	<string>警告</string>
+	<key>Welcome to Computer MCP</key>
+	<string>欢迎使用 Computer MCP</string>
+	<key>Without a matching bundled package, contributions remain unavailable.</key>
+	<string>若没有匹配的内置包，集成功能将保持不可用。</string>
+	<key>Working directory</key>
+	<string>工作目录</string>
+	<key>Working…</key>
+	<string>正在处理…</string>
+	<key>Write</key>
+	<string>写入</string>
+	<key>Wrong target</key>
+	<string>指向错误目标</string>
+	<key>You can retry any step without recreating the connection. Secrets remain in Keychain and are never included in diagnostics.</key>
+	<string>无需重新创建连接即可重试任意步骤。密钥始终保留在钥匙串中，绝不会出现在诊断信息里。</string>
+	<key>Your draft is preserved. Review the current source before saving or clearing.</key>
+	<string>草稿已保留。请在保存或清除之前查看当前来源。</string>
+	<key>adding the new entry</key>
+	<string>添加新条目</string>
+	<key>checking its command</key>
+	<string>检查其命令</string>
+	<key>cloudflared PID %@</key>
+	<string>cloudflared PID %@</string>
+	<key>cloudflared executable</key>
+	<string>cloudflared 可执行文件</string>
+	<key>cloudflared is available</key>
+	<string>cloudflared 可用</string>
+	<key>cloudflared is unavailable</key>
+	<string>cloudflared 不可用</string>
+	<key>commits.action.review</key>
+	<string>查看所选…</string>
+	<key>commits.dialog.release.confirm</key>
+	<string>释放所选</string>
+	<key>commits.dialog.release.title</key>
+	<string>释放所选的 %lld 条记录？</string>
+	<key>commits.empty.message</key>
+	<string>主机当前没有保留用于恢复的记录。</string>
+	<key>commits.empty.title</key>
+	<string>无保留的提交</string>
+	<key>commits.section.title</key>
+	<string>保留的提交</string>
+	<key>commits.selection.count</key>
+	<string>已选择 %lld 项</string>
+	<key>commits.selection.none</key>
+	<string>选择记录以查看或释放</string>
+	<key>commits.standalone.footer</key>
+	<string>即使分支或项目已被移除，保留的提交仍可在此处查看与释放。</string>
+	<key>commits.standalone.title</key>
+	<string>保留的提交与存储</string>
+	<key>commits.tag.project_removed</key>
+	<string>项目已移除</string>
+	<key>common.cancel</key>
+	<string>取消</string>
+	<key>common.clear_selection</key>
+	<string>清除选择</string>
+	<key>common.refresh</key>
+	<string>刷新</string>
+	<key>common.resume</key>
+	<string>继续</string>
+	<key>common.select_all</key>
+	<string>全选</string>
+	<key>entry.privacy.row_subtitle</key>
+	<string>查看保留的提交并回收已释放的存储空间</string>
+	<key>entry.privacy.row_title</key>
+	<string>保留的提交与存储</string>
+	<key>entry.projects.section_title</key>
+	<string>工作树与恢复</string>
+	<key>grant.a11y.openSourceHint</key>
+	<string>打开可编辑此权限的来源设置。</string>
+	<key>grant.a11y.savedAndEffective</key>
+	<string>已保存为%1$@，实际生效为%2$@</string>
+	<key>grant.choice.allow</key>
+	<string>允许</string>
+	<key>grant.choice.askEveryTime</key>
+	<string>每次询问</string>
+	<key>grant.choice.dontAllow</key>
+	<string>不允许</string>
+	<key>grant.effective.format</key>
+	<string>实际生效：%@</string>
+	<key>grant.oneTime.retryClarification</key>
+	<string>批准后，请求方必须显式重试同一操作。</string>
+	<key>grant.projectRegistration.title</key>
+	<string>项目注册</string>
+	<key>grant.saved.format</key>
+	<string>已保存：%@</string>
+	<key>grant.source.editAction</key>
+	<string>编辑来源</string>
+	<key>grant.status.inherited</key>
+	<string>继承</string>
+	<key>grant.status.limited</key>
+	<string>受限</string>
+	<key>grant.status.unavailable</key>
+	<string>不可用</string>
+	<key>https://%@/mcp</key>
+	<string>https://%@/mcp</string>
+	<key>iCloud Drive</key>
+	<string>iCloud 云盘</string>
+	<key>macOS privacy access used by enabled endpoints</key>
+	<string>已启用端点使用的 macOS 隐私访问权限</string>
+	<key>operation.kind.reclaiming_storage</key>
+	<string>正在回收存储空间</string>
+	<key>operation.kind.releasing_commits</key>
+	<string>正在释放保留的提交</string>
+	<key>operation.kind.removing_worktree</key>
+	<string>正在移除工作树</string>
+	<key>principal.a11y.revoke</key>
+	<string>撤销%@的访问权限</string>
+	<key>principal.action.revoke</key>
+	<string>撤销…</string>
+	<key>reading its settings</key>
+	<string>读取其设置</string>
+	<key>recovery.gate_identity_changed</key>
+	<string>写入准入现已属于另一代工作树。</string>
+	<key>recovery.gate_pending</key>
+	<string>写入准入仍在重新开放。</string>
+	<key>recovery.last_branch</key>
+	<string>记录的分支：%@</string>
+	<key>recovery.object.blob</key>
+	<string>数据对象</string>
+	<key>recovery.object.commit</key>
+	<string>提交</string>
+	<key>recovery.object.tag</key>
+	<string>标签</string>
+	<key>recovery.object.tree</key>
+	<string>目录树</string>
+	<key>recovery.operation_failed</key>
+	<string>无法完成此操作。</string>
+	<key>recovery.operation_interrupted</key>
+	<string>恢复操作已中断</string>
+	<key>recovery.record_in_use</key>
+	<string>其他操作或受保护的历史记录仍需要此记录</string>
+	<key>recovery.record_pending</key>
+	<string>操作待完成</string>
+	<key>recovery.release_completed</key>
+	<string>已释放记录：%lld 条</string>
+	<key>recovery.release_completed_detail</key>
+	<string>请单独运行存储空间回收以测量回收的空间。</string>
+	<key>recovery.release_review_detail</key>
+	<string>请核对要释放的具体记录。随后可以单独运行存储空间回收。</string>
+	<key>recovery.requires_attention</key>
+	<string>恢复操作需要处理</string>
+	<key>recovery.restore_review</key>
+	<string>请先在“隐私与安全性”中检查恢复的权限，再进行更改。</string>
+	<key>recovery.review_changed</key>
+	<string>已审阅的选择发生变化，请刷新后重新审阅。</string>
+	<key>recovery.store_generation</key>
+	<string>存储实例</string>
+	<key>recovery.store_identity</key>
+	<string>恢复存储</string>
+	<key>removing the old entry</key>
+	<string>移除旧条目</string>
+	<key>restoring the previous entry</key>
+	<string>还原原来的条目</string>
+	<key>revocation.dialog.cancel</key>
+	<string>取消</string>
+	<key>revocation.dialog.confirm</key>
+	<string>撤销访问权限</string>
+	<key>revocation.dialog.message</key>
+	<string>此操作会拒绝这项权限，并结束依赖该权限的程序。</string>
+	<key>revocation.dialog.scopedTitle</key>
+	<string>要撤销“%2$@”的“%1$@”权限吗？</string>
+	<key>saving the entry</key>
+	<string>保存条目</string>
+	<key>storage.action.reclaim</key>
+	<string>回收存储空间…</string>
+	<key>storage.allocation</key>
+	<string>回收前分配：%@ · 回收后：%@</string>
+	<key>storage.description</key>
+	<string>逻辑释放仅移除恢复记录，不会立即腾出磁盘空间。需要时请单独执行存储空间回收。</string>
+	<key>storage.dialog.reclaim.confirm</key>
+	<string>回收存储空间</string>
+	<key>storage.dialog.reclaim.message</key>
+	<string>对已逻辑释放的记录执行存储空间回收，并在完成后报告实测回收的空间大小。</string>
+	<key>storage.dialog.reclaim.title</key>
+	<string>回收已释放的存储空间？</string>
+	<key>storage.reclamation_deferred</key>
+	<string>恢复存储正忙</string>
+	<key>storage.result.measured</key>
+	<string>实测已回收 %@（%@）。</string>
+	<key>storage.result.none_reclaimed</key>
+	<string>已于 %@ 检查回收。未回收额外磁盘空间。</string>
+	<key>storage.review.allocated</key>
+	<string>当前已分配空间</string>
+	<key>storage.review.pack</key>
+	<string>包文件标识</string>
+	<key>storage.section.title</key>
+	<string>存储空间回收</string>
+	<key>the change</key>
+	<string>这项更改</string>
+	<key>tunnel-client executable</key>
+	<string>tunnel-client 可执行文件</string>
+	<key>worktree.action.remove</key>
+	<string>移除…</string>
+	<key>worktree.action.review_discard</key>
+	<string>审阅放弃操作…</string>
+	<key>worktree.dialog.discard.title</key>
+	<string>放弃“%@”中的未提交更改？</string>
+	<key>worktree.dialog.discard_remove.confirm</key>
+	<string>放弃更改并移除</string>
+	<key>worktree.dialog.discard_remove.message</key>
+	<string>移除此检出目录会永久放弃其中所有未提交的更改，包括已暂存、未跟踪和已忽略的文件。</string>
+	<key>worktree.dialog.remove.confirm</key>
+	<string>移除工作树</string>
+	<key>worktree.dialog.remove.title</key>
+	<string>移除工作树“%@”？</string>
+	<key>worktree.empty.message</key>
+	<string>此项目暂无托管或检测到的工作树记录。</string>
+	<key>worktree.empty.title</key>
+	<string>无工作树</string>
+	<key>worktree.inventory.unavailable</key>
+	<string>无法访问源检出目录。</string>
+	<key>worktree.removal.pending</key>
+	<string>正在等待确认工作树移除结果</string>
+	<key>worktree.removal.refused</key>
+	<string>工作树移除已被拒绝</string>
+	<key>worktree.removal.review_detail</key>
+	<string>停止写入进程并移除此托管检出目录。已提交内容的恢复记录仍可使用。</string>
+	<key>worktree.removal.verified</key>
+	<string>已确认工作树移除</string>
+	<key>worktree.review.head</key>
+	<string>当前提交</string>
+	<key>worktree.section.title</key>
+	<string>工作树</string>
+	<key>worktree.state.external</key>
+	<string>外部</string>
+	<key>worktree.state.managed</key>
+	<string>托管</string>
+	<key>worktree.state.removed</key>
+	<string>已移除</string>
+	<key>worktree.state.unavailable</key>
+	<string>暂不可用</string>
+	<key>worktree.status.clean</key>
+	<string>无未提交更改</string>
+	<key>worktree.status.uncommitted</key>
+	<string>有未提交更改</string>
+	<key>worktree.writers.drained</key>
+	<string>获准写入的进程已停止，工作树移除已确认。</string>
+	<key>“%1$@” %2$@ has no package for this Mac (%3$@).</key>
+	<string>“%1$@” %2$@ 没有适用于这台 Mac（%3$@）的安装包。</string>
+	<key>“%1$@” %2$@ requires Computer MCP %3$@ or later. This is Computer MCP %4$@.</key>
+	<string>“%1$@” %2$@ 需要 Computer MCP %3$@ 或更高版本；当前为 Computer MCP %4$@。</string>
+	<key>“%1$@” %2$@ supports Computer MCP versions earlier than %3$@. This is Computer MCP %4$@.</key>
+	<string>“%1$@” %2$@ 仅支持低于 %3$@ 的 Computer MCP 版本；当前为 Computer MCP %4$@。</string>
+	<key>“%1$@” %2$@ uses plugin API %3$@, which this version of Computer MCP no longer supports. It supports plugin API %4$@.</key>
+	<string>“%1$@” %2$@ 使用插件 API %3$@，此版本的 Computer MCP 已不再支持；当前支持插件 API %4$@。</string>
+	<key>“%1$@” %2$@ uses plugin API %3$@. This version of Computer MCP supports plugin API %4$@.</key>
+	<string>“%1$@” %2$@ 使用插件 API %3$@，此版本的 Computer MCP 支持插件 API %4$@。</string>
+	<key>“%1$@” would like to connect to “%2$@” from “%3$@”.</key>
+	<string>“%1$@”想要连接“%2$@”（来自“%3$@”）。</string>
+	<key>“%1$@” would like to read and change “%2$@”.</key>
+	<string>“%1$@”想要读取和修改“%2$@”。</string>
+	<key>“%1$@” would like to read “%2$@”.</key>
+	<string>“%1$@”想要读取“%2$@”。</string>
+	<key>“%1$@” would like to use “%2$@”.</key>
+	<string>“%1$@”想要使用“%2$@”。</string>
+</dict>
+</plist>

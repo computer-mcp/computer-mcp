@@ -577,8 +577,11 @@ let neutralTargets: [Target] =
           "ComputerMCPPlatformDarwin", "ComputerMCPProcess",
           "ComputerMCPTunnels",
         ],
+        exclude: ["Resources/Localizable.xcstrings"],
+        // Copy the generated tables intact to preserve the locale directory names in native builds.
         resources: [
-          .process("Resources")
+          .copy("Resources/en.lproj"),
+          .copy("Resources/zh-Hans.lproj"),
         ]
       ),
       .testTarget(

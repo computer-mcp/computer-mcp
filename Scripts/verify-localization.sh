@@ -2,7 +2,8 @@
 set -euo pipefail
 
 ROOT_DIR=${0:A:h:h}
-CATALOG="$ROOT_DIR/Sources/ComputerMCPApp/Resources/Localizable.xcstrings"
+LOCALIZATION_DIR="$ROOT_DIR/Sources/ComputerMCPApp/Resources"
+CATALOG="$LOCALIZATION_DIR/Localizable.xcstrings"
 TEMP_DIR=$(/usr/bin/mktemp -d /tmp/computer-mcp-localization.XXXXXX)
 trap '/bin/rm -rf -- "$TEMP_DIR"' EXIT
 
@@ -179,8 +180,21 @@ COMPILED_DIR="$TEMP_DIR/compiled"
   --serialization-format binary
 
 for locale in en zh-Hans; do
-  [[ -f "$COMPILED_DIR/$locale.lproj/Localizable.strings" ]] \
+  table="$locale.lproj/Localizable.strings"
+  [[ -f "$COMPILED_DIR/$table" ]] \
     || fail "String Catalog did not compile $locale resources."
+  if [[ -f "$LOCALIZATION_DIR/$table" ]]; then
+    /usr/bin/plutil -convert json -o - "$COMPILED_DIR/$table" \
+      | /usr/bin/jq -S . >"$TEMP_DIR/compiled-table.json"
+    /usr/bin/plutil -convert json -o - "$LOCALIZATION_DIR/$table" \
+      | /usr/bin/jq -S . >"$TEMP_DIR/swiftpm-table.json"
+    if /usr/bin/cmp -s "$TEMP_DIR/compiled-table.json" "$TEMP_DIR/swiftpm-table.json"; then
+      continue
+    fi
+  fi
+  fail "SwiftPM's $locale table is missing or differs from the String Catalog.
+Regenerate the tables with:
+  xcrun xcstringstool compile \"$CATALOG\" --output-directory \"$LOCALIZATION_DIR\" --serialization-format text"
 done
 
 EXTRACTED_DIR="$TEMP_DIR/extracted"

@@ -1,0 +1,2466 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>%@ B</key>
+	<string>%@ B</string>
+	<key>%@ active connection(s)</key>
+	<string>%@ active connection(s)</string>
+	<key>%@ allows at most %@</key>
+	<string>%@ allows at most %@</string>
+	<key>%@ arguments</key>
+	<string>%@ arguments</string>
+	<key>%@ bytes</key>
+	<string>%@ bytes</string>
+	<key>%@ can't be read. Until it can, nothing it limits is allowed; the settings below apply again once it can be read.</key>
+	<string>%@ can't be read. Until it can, nothing it limits is allowed; the settings below apply again once it can be read.</string>
+	<key>%@ isn't available: it isn't installed, or its command didn't respond.</key>
+	<string>%@ isn't available: it isn't installed, or its command didn't respond.</string>
+	<key>%@ ms</key>
+	<string>%@ ms</string>
+	<key>%@ must not be empty.</key>
+	<string>%@ must not be empty.</string>
+	<key>%@ of %@ running</key>
+	<string>%@ of %@ running</string>
+	<key>%@ registered root(s)</key>
+	<string>%@ registered root(s)</string>
+	<key>%@ reported an error while changing its settings.</key>
+	<string>%@ reported an error while changing its settings.</string>
+	<key>%@ retained revision(s)</key>
+	<string>%@ retained revision(s)</string>
+	<key>%@ revision(s)</key>
+	<string>%@ revision(s)</string>
+	<key>%@ seconds</key>
+	<string>%@ seconds</string>
+	<key>%@ tools</key>
+	<string>%@ tools</string>
+	<key>%@ · %@</key>
+	<string>%@ · %@</string>
+	<key>%@'s settings changed after you reviewed them. Nothing was changed; review again.</key>
+	<string>%@'s settings changed after you reviewed them. Nothing was changed; review again.</string>
+	<key>A current end-to-end request was observed</key>
+	<string>A current end-to-end request was observed</string>
+	<key>A matching digest verifies the archive bytes, not an official publisher. New plugins start disabled. Updates keep host settings and earlier versions.</key>
+	<string>A matching digest verifies the archive bytes, not an official publisher. New plugins start disabled. Updates keep host settings and earlier versions.</string>
+	<key>A matching successful request has been observed.</key>
+	<string>A matching successful request has been observed.</string>
+	<key>A plugin installation or recovery is still running. Retry when it finishes.</key>
+	<string>A plugin installation or recovery is still running. Retry when it finishes.</string>
+	<key>A project is registered</key>
+	<string>A project is registered</string>
+	<key>A remote Cloudflare gateway profile is required.</key>
+	<string>A remote Cloudflare gateway profile is required.</string>
+	<key>A remotely managed named-tunnel token is required. Quick Tunnel and noauth are not supported.</key>
+	<string>A remotely managed named-tunnel token is required. Quick Tunnel and noauth are not supported.</string>
+	<key>A required dependency or component is unavailable.</key>
+	<string>A required dependency or component is unavailable.</string>
+	<key>A script interpreter is unavailable in the launch environment. Check its path and runtime installation.</key>
+	<string>A script interpreter is unavailable in the launch environment. Check its path and runtime installation.</string>
+	<key>Absolute executable path</key>
+	<string>Absolute executable path</string>
+	<key>Access Blocked</key>
+	<string>Access Blocked</string>
+	<key>Access ended</key>
+	<string>Access ended</string>
+	<key>Access for %@</key>
+	<string>Access for %@</string>
+	<key>Access unavailable</key>
+	<string>Access unavailable</string>
+	<key>Accessibility</key>
+	<string>Accessibility</string>
+	<key>Account availability and organization policy are managed in ChatGPT.</key>
+	<string>Account availability and organization policy are managed in ChatGPT.</string>
+	<key>Activate</key>
+	<string>Activate</string>
+	<key>Activate %@?</key>
+	<string>Activate %@?</string>
+	<key>Active</key>
+	<string>Active</string>
+	<key>Active profile</key>
+	<string>Active profile</string>
+	<key>Activity</key>
+	<string>Activity</string>
+	<key>Add</key>
+	<string>Add</string>
+	<key>Add ChatGPT Connection</key>
+	<string>Add ChatGPT Connection</string>
+	<key>Add Cloudflare Connection</key>
+	<string>Add Cloudflare Connection</string>
+	<key>Add Cloudflare Tunnel</key>
+	<string>Add Cloudflare Tunnel</string>
+	<key>Add Connection</key>
+	<string>Add Connection</string>
+	<key>Add MCP</key>
+	<string>Add MCP</string>
+	<key>Add Project</key>
+	<string>Add Project</string>
+	<key>Add Tunnel</key>
+	<string>Add Tunnel</string>
+	<key>Add a Tunnel manifest and local Keychain credentials.</key>
+	<string>Add a Tunnel manifest and local Keychain credentials.</string>
+	<key>Add a connection to begin.</key>
+	<string>Add a connection to begin.</string>
+	<key>Add a folder to create a persistent local project grant.</key>
+	<string>Add a folder to create a persistent local project grant.</string>
+	<key>Add a local package to review its contributions before enabling it.</key>
+	<string>Add a local package to review its contributions before enabling it.</string>
+	<key>Add a remotely managed named tunnel. Quick Tunnel and noauth are Validation development-only.</key>
+	<string>Add a remotely managed named tunnel. Quick Tunnel and noauth are Validation development-only.</string>
+	<key>Add a validated profile to the Computer MCP configuration.</key>
+	<string>Add a validated profile to the Computer MCP configuration.</string>
+	<key>Add argument</key>
+	<string>Add argument</string>
+	<key>Add executable binding</key>
+	<string>Add executable binding</string>
+	<key>Add local package</key>
+	<string>Add local package</string>
+	<key>Add one ChatGPT connection in Computer MCP to continue.</key>
+	<string>Add one ChatGPT connection in Computer MCP to continue.</string>
+	<key>Add one Cloudflare connection in Computer MCP to continue.</key>
+	<string>Add one Cloudflare connection in Computer MCP to continue.</string>
+	<key>Add owner policy for %@</key>
+	<string>Add owner policy for %@</string>
+	<key>Add the hostname and named-tunnel token. Computer MCP will create an access token for the protected loopback origin when requested.</key>
+	<string>Add the hostname and named-tunnel token. Computer MCP will create an access token for the protected loopback origin when requested.</string>
+	<key>Add the tunnel ID, tunnel-client profile, gateway profile, and OpenAI API key. The API key is stored in Keychain.</key>
+	<string>Add the tunnel ID, tunnel-client profile, gateway profile, and OpenAI API key. The API key is stored in Keychain.</string>
+	<key>Add ~/.local/bin to PATH to invoke computer-mcp by name.</key>
+	<string>Add ~/.local/bin to PATH to invoke computer-mcp by name.</string>
+	<key>Add…</key>
+	<string>Add…</string>
+	<key>Advanced</key>
+	<string>Advanced</string>
+	<key>After the gateway and named tunnel are Ready, connect the intended public MCP consumer using the one-time Computer MCP Access Token, then invoke one tool.</key>
+	<string>After the gateway and named tunnel are Ready, connect the intended public MCP consumer using the one-time Computer MCP Access Token, then invoke one tool.</string>
+	<key>After the gateway and tunnel are Ready, open ChatGPT, create or update the Connector with the tunnel endpoint, then invoke one Computer MCP tool in a new chat.</key>
+	<string>After the gateway and tunnel are Ready, open ChatGPT, create or update the Connector with the tunnel endpoint, then invoke one Computer MCP tool in a new chat.</string>
+	<key>All</key>
+	<string>All</string>
+	<key>All MCP Servers</key>
+	<string>All MCP Servers</string>
+	<key>All MCP servers and CLIs contributed by this package share one provider sandbox container, along with its approved permissions, network access, and read exceptions.</key>
+	<string>All MCP servers and CLIs contributed by this package share one provider sandbox container, along with its approved permissions, network access, and read exceptions.</string>
+	<key>All Plugins</key>
+	<string>All Plugins</string>
+	<key>All Projects</key>
+	<string>All Projects</string>
+	<key>All also includes tools added by future server updates.</key>
+	<string>All also includes tools added by future server updates.</string>
+	<key>All configured connections are healthy.</key>
+	<string>All configured connections are healthy.</string>
+	<key>All contributions</key>
+	<string>All contributions</string>
+	<key>All current and future MCP servers</key>
+	<string>All current and future MCP servers</string>
+	<key>All current and future plugins</key>
+	<string>All current and future plugins</string>
+	<key>All current and future projects</key>
+	<string>All current and future projects</string>
+	<key>All current and future tools</key>
+	<string>All current and future tools</string>
+	<key>Allow</key>
+	<string>Allow</string>
+	<key>Allow Full Access</key>
+	<string>Allow Full Access</string>
+	<key>Allow Full Access?</key>
+	<string>Allow Full Access?</string>
+	<key>Allow Full access…</key>
+	<string>Allow Full access…</string>
+	<key>Allow arbitrary raw arguments</key>
+	<string>Allow arbitrary raw arguments</string>
+	<key>Allow for</key>
+	<string>Allow for</string>
+	<key>Allow host tools and sandboxed programs to read files in these folders.</key>
+	<string>Allow host tools and sandboxed programs to read files in these folders.</string>
+	<key>Allow scoped host services</key>
+	<string>Allow scoped host services</string>
+	<key>Allow sign-in with OAuth</key>
+	<string>Allow sign-in with OAuth</string>
+	<key>Allowed</key>
+	<string>Allowed</string>
+	<key>Allowed client hosts</key>
+	<string>Allowed client hosts</string>
+	<key>Allowed tool names, one per line</key>
+	<string>Allowed tool names, one per line</string>
+	<key>Allowed tools</key>
+	<string>Allowed tools</string>
+	<key>Allowing adds the host to the project's network access in the sandbox.</key>
+	<string>Allowing adds the host to the project's network access in the sandbox.</string>
+	<key>Allowing gives “%@” access to this project and all its worktrees until you revoke it.</key>
+	<string>Allowing gives “%@” access to this project and all its worktrees until you revoke it.</string>
+	<key>Allowing registers this folder as a project and gives “%@” access to it and its worktrees until you revoke it.</key>
+	<string>Allowing registers this folder as a project and gives “%@” access to it and its worktrees until you revoke it.</string>
+	<key>Always</key>
+	<string>Always</string>
+	<key>Always Allow this Client</key>
+	<string>Always Allow this Client</string>
+	<key>Always adds this host to the project’s saved network access.</key>
+	<string>Always adds this host to the project’s saved network access.</string>
+	<key>Always applies to every connection that uses “%@”.</key>
+	<string>Always applies to every connection that uses “%@”.</string>
+	<key>An OpenAI API key is required when creating a Tunnel profile.</key>
+	<string>An OpenAI API key is required when creating a Tunnel profile.</string>
+	<key>An applicable policy source can't be read.</key>
+	<string>An applicable policy source can't be read.</string>
+	<key>An empty prefix preserves original tool names. Conflicts are rejected.</key>
+	<string>An empty prefix preserves original tool names. Conflicts are rejected.</string>
+	<key>An empty selection exposes no tools.</key>
+	<string>An empty selection exposes no tools.</string>
+	<key>An empty whitelist permits no tools.</key>
+	<string>An empty whitelist permits no tools.</string>
+	<key>Another client change is in progress. Try again shortly.</key>
+	<string>Another client change is in progress. Try again shortly.</string>
+	<key>Another gateway configuration change is in progress. Retry after it finishes.</key>
+	<string>Another gateway configuration change is in progress. Retry after it finishes.</string>
+	<key>Any Host</key>
+	<string>Any Host</string>
+	<key>App</key>
+	<string>App</string>
+	<key>App Server, Exec, and MCP paths are independently isolated.</key>
+	<string>App Server, Exec, and MCP paths are independently isolated.</string>
+	<key>Apple silicon</key>
+	<string>Apple silicon</string>
+	<key>Application support</key>
+	<string>Application support</string>
+	<key>Applied</key>
+	<string>Applied</string>
+	<key>Apply</key>
+	<string>Apply</string>
+	<key>Applying this change reconnects the running gateway.</key>
+	<string>Applying this change reconnects the running gateway.</string>
+	<key>Approval required</key>
+	<string>Approval required</string>
+	<key>Approve</key>
+	<string>Approve</string>
+	<key>Approve &amp; Enable</key>
+	<string>Approve &amp; Enable</string>
+	<key>Approve only if the code matches the one shown in the browser where you are signing in.</key>
+	<string>Approve only if the code matches the one shown in the browser where you are signing in.</string>
+	<key>Approved</key>
+	<string>Approved</string>
+	<key>Approved %@</key>
+	<string>Approved %@</string>
+	<key>Approved read exceptions grant read-only access inside the sandbox to the exact resolved paths shown.</key>
+	<string>Approved read exceptions grant read-only access inside the sandbox to the exact resolved paths shown.</string>
+	<key>Argument</key>
+	<string>Argument</string>
+	<key>Arguments</key>
+	<string>Arguments</string>
+	<key>Arguments (JSON array)</key>
+	<string>Arguments (JSON array)</string>
+	<key>Ask</key>
+	<string>Ask</string>
+	<key>Ask uses the profile's default project rule. A wildcard rule still applies.</key>
+	<string>Ask uses the profile's default project rule. A wildcard rule still applies.</string>
+	<key>Asset ID</key>
+	<string>Asset ID</string>
+	<key>Asset page %@</key>
+	<string>Asset page %@</string>
+	<key>Audit</key>
+	<string>Audit</string>
+	<key>Available</key>
+	<string>Available</string>
+	<key>Background</key>
+	<string>Background</string>
+	<key>Bearer token</key>
+	<string>Bearer token</string>
+	<key>Before you begin</key>
+	<string>Before you begin</string>
+	<key>Binary compatibility</key>
+	<string>Binary compatibility</string>
+	<key>Bindings select existing executables. Computer MCP does not install or update external dependencies.</key>
+	<string>Bindings select existing executables. Computer MCP does not install or update external dependencies.</string>
+	<key>Blocked</key>
+	<string>Blocked</string>
+	<key>Blocked Read Location</key>
+	<string>Blocked Read Location</string>
+	<key>Blocked Read Locations</key>
+	<string>Blocked Read Locations</string>
+	<key>Bookmark stale</key>
+	<string>Bookmark stale</string>
+	<key>Broken link</key>
+	<string>Broken link</string>
+	<key>Built-in Tools</key>
+	<string>Built-in Tools</string>
+	<key>Builtin</key>
+	<string>Builtin</string>
+	<key>Bundled</key>
+	<string>Bundled</string>
+	<key>CLI</key>
+	<string>CLI</string>
+	<key>CLI enabled</key>
+	<string>CLI enabled</string>
+	<key>CLI, MCP, Computer Use, and external runtimes</key>
+	<string>CLI, MCP, Computer Use, and external runtimes</string>
+	<key>Cached</key>
+	<string>Cached</string>
+	<key>Caller</key>
+	<string>Caller</string>
+	<key>Can't Be Read</key>
+	<string>Can't Be Read</string>
+	<key>Cancel</key>
+	<string>Cancel</string>
+	<key>Cancel installation</key>
+	<string>Cancel installation</string>
+	<key>Cancel search</key>
+	<string>Cancel search</string>
+	<key>Cancelling and checking the result…</key>
+	<string>Cancelling and checking the result…</string>
+	<key>Capability</key>
+	<string>Capability</string>
+	<key>Capability decision recorded</key>
+	<string>Capability decision recorded</string>
+	<key>Capability decisions will appear here after the gateway processes calls.</key>
+	<string>Capability decisions will appear here after the gateway processes calls.</string>
+	<key>Catalog could not be refreshed. Showing saved results.</key>
+	<string>Catalog could not be refreshed. Showing saved results.</string>
+	<key>Catalog generation %@</key>
+	<string>Catalog generation %@</string>
+	<key>Catalog issues</key>
+	<string>Catalog issues</string>
+	<key>Catalog page %@</key>
+	<string>Catalog page %@</string>
+	<key>Change the filter to see other decisions.</key>
+	<string>Change the filter to see other decisions.</string>
+	<key>Changes apply only if the saved configuration has not changed.</key>
+	<string>Changes apply only if the saved configuration has not changed.</string>
+	<key>Changes are validated, versioned, and activated atomically.</key>
+	<string>Changes are validated, versioned, and activated atomically.</string>
+	<key>ChatGPT</key>
+	<string>ChatGPT</string>
+	<key>ChatGPT Control</key>
+	<string>ChatGPT Control</string>
+	<key>ChatGPT Observe</key>
+	<string>ChatGPT Observe</string>
+	<key>ChatGPT and Cloudflare each have a complete guided setup page.</key>
+	<string>ChatGPT and Cloudflare each have a complete guided setup page.</string>
+	<key>ChatGPT connection</key>
+	<string>ChatGPT connection</string>
+	<key>ChatGPT connection is not configured</key>
+	<string>ChatGPT connection is not configured</string>
+	<key>Check again</key>
+	<string>Check again</string>
+	<key>Check connection</key>
+	<string>Check connection</string>
+	<key>Check connection health</key>
+	<string>Check connection health</string>
+	<key>Check for Request</key>
+	<string>Check for Request</string>
+	<key>Check package</key>
+	<string>Check package</string>
+	<key>Checked at</key>
+	<string>Checked at</string>
+	<key>Checking client access…</key>
+	<string>Checking client access…</string>
+	<key>Checking connection readiness</key>
+	<string>Checking connection readiness</string>
+	<key>Checking this connection</key>
+	<string>Checking this connection</string>
+	<key>Checking…</key>
+	<string>Checking…</string>
+	<key>Checks</key>
+	<string>Checks</string>
+	<key>Checks include disabled contributions. Nothing is enabled, executed or installed.</key>
+	<string>Checks include disabled contributions. Nothing is enabled, executed or installed.</string>
+	<key>Checks this MCP’s configuration, credentials and process records. Connection and catalog checks are unavailable in this build.</key>
+	<string>Checks this MCP’s configuration, credentials and process records. Connection and catalog checks are unavailable in this build.</string>
+	<key>Choose a ZIP, TAR or gzip package and enter its expected identity and SHA-256 from a trusted source.</key>
+	<string>Choose a ZIP, TAR or gzip package and enter its expected identity and SHA-256 from a trusted source.</string>
+	<key>Choose a profile</key>
+	<string>Choose a profile</string>
+	<key>Choose a project</key>
+	<string>Choose a project</string>
+	<key>Choose a remote connection when you need one</key>
+	<string>Choose a remote connection when you need one</string>
+	<key>Choose an archive for your Mac. The App checks compatibility and source again before installation. Publisher provenance is not a signature.</key>
+	<string>Choose an archive for your Mac. The App checks compatibility and source again before installation. Publisher provenance is not a signature.</string>
+	<key>Choose archive</key>
+	<string>Choose archive</string>
+	<key>Choose path…</key>
+	<string>Choose path…</string>
+	<key>Choose release archive</key>
+	<string>Choose release archive</string>
+	<key>Choose the connection you want to set up. You can return here at any time.</key>
+	<string>Choose the connection you want to set up. You can return here at any time.</string>
+	<key>Choose the folder for %@. Existing project permissions will apply to this folder.</key>
+	<string>Choose the folder for %@. Existing project permissions will apply to this folder.</string>
+	<key>Choose what connected clients can do</key>
+	<string>Choose what connected clients can do</string>
+	<key>Claude Code</key>
+	<string>Claude Code</string>
+	<key>Claude Desktop</key>
+	<string>Claude Desktop</string>
+	<key>Claude Desktop must be closed before applying this plan.</key>
+	<string>Claude Desktop must be closed before applying this plan.</string>
+	<key>Clear Policy</key>
+	<string>Clear Policy</string>
+	<key>Clear Policy…</key>
+	<string>Clear Policy…</string>
+	<key>Clear the saved policy for %@?</key>
+	<string>Clear the saved policy for %@?</string>
+	<key>Clearing removes this owner's policy. Limits from other sources still apply.</key>
+	<string>Clearing removes this owner's policy. Limits from other sources still apply.</string>
+	<key>Client</key>
+	<string>Client</string>
+	<key>Client %@</key>
+	<string>Client %@</string>
+	<key>Client access</key>
+	<string>Client access</string>
+	<key>Client access changed. Close this window and review the connection again.</key>
+	<string>Client access changed. Close this window and review the connection again.</string>
+	<key>Client access is unavailable. Refresh to check current connections.</key>
+	<string>Client access is unavailable. Refresh to check current connections.</string>
+	<key>Client access status unavailable</key>
+	<string>Client access status unavailable</string>
+	<key>Client profile unavailable</key>
+	<string>Client profile unavailable</string>
+	<key>Clients and Plugins</key>
+	<string>Clients and Plugins</string>
+	<key>Clients and plugins with access to a project can read it. With Read &amp; Write they can change it in worktrees and merge their work back.</key>
+	<string>Clients and plugins with access to a project can read it. With Read &amp; Write they can change it in worktrees and merge their work back.</string>
+	<key>Clients appear here when they connect.</key>
+	<string>Clients appear here when they connect.</string>
+	<key>Clients sharing the same connection credential share a trusted identity. Ending this session does not revoke an always-allowed client.</key>
+	<string>Clients sharing the same connection credential share a trusted identity. Ending this session does not revoke an always-allowed client.</string>
+	<key>Clients that cannot send a custom header, such as claude.ai, sign in with OAuth. You approve each new client in Client access by matching the code shown on its browser page. Separate client hosts with commas.</key>
+	<string>Clients that cannot send a custom header, such as claude.ai, sign in with OAuth. You approve each new client in Client access by matching the code shown on its browser page. Separate client hosts with commas.</string>
+	<key>Clients, Plugins, and Local Servers</key>
+	<string>Clients, Plugins, and Local Servers</string>
+	<key>Close</key>
+	<string>Close</string>
+	<key>Close Welcome</key>
+	<string>Close Welcome</string>
+	<key>Close other programs that edit this file. A write after the final check can be lost.</key>
+	<string>Close other programs that edit this file. A write after the final check can be lost.</string>
+	<key>Cloudflare</key>
+	<string>Cloudflare</string>
+	<key>Cloudflare Access service tokens belong to consumers and are never stored here.</key>
+	<string>Cloudflare Access service tokens belong to consumers and are never stored here.</string>
+	<key>Cloudflare Control</key>
+	<string>Cloudflare Control</string>
+	<key>Cloudflare Observe</key>
+	<string>Cloudflare Observe</string>
+	<key>Cloudflare Tunnel</key>
+	<string>Cloudflare Tunnel</string>
+	<key>Cloudflare Tunnel Logs</key>
+	<string>Cloudflare Tunnel Logs</string>
+	<key>Cloudflare Tunnel diagnostics failed</key>
+	<string>Cloudflare Tunnel diagnostics failed</string>
+	<key>Cloudflare connection is not configured</key>
+	<string>Cloudflare connection is not configured</string>
+	<key>Cloudflare named tunnel</key>
+	<string>Cloudflare named tunnel</string>
+	<key>Cloudflare named tunnel setup, protected origin, and real-request verification</key>
+	<string>Cloudflare named tunnel setup, protected origin, and real-request verification</string>
+	<key>Codex</key>
+	<string>Codex</string>
+	<key>Command</key>
+	<string>Command</string>
+	<key>Command line tool</key>
+	<string>Command line tool</string>
+	<key>Command line tool is installed</key>
+	<string>Command line tool is installed</string>
+	<key>Command line tool is not installed</key>
+	<string>Command line tool is not installed</string>
+	<key>Command line tool status is unavailable</key>
+	<string>Command line tool status is unavailable</string>
+	<key>Commit</key>
+	<string>Commit</string>
+	<key>Committed</key>
+	<string>Committed</string>
+	<key>Complete in System Settings</key>
+	<string>Complete in System Settings</string>
+	<key>Complete the next required step.</key>
+	<string>Complete the next required step.</string>
+	<key>Completed in %@ ms</key>
+	<string>Completed in %@ ms</string>
+	<key>Computer MCP</key>
+	<string>Computer MCP</string>
+	<key>Computer MCP Access Token created</key>
+	<string>Computer MCP Access Token created</string>
+	<key>Computer MCP App</key>
+	<string>Computer MCP App</string>
+	<key>Computer MCP App is available</key>
+	<string>Computer MCP App is available</string>
+	<key>Computer MCP App is unavailable</key>
+	<string>Computer MCP App is unavailable</string>
+	<key>Computer MCP Diagnostics</key>
+	<string>Computer MCP Diagnostics</string>
+	<key>Computer MCP could not initialize: %@</key>
+	<string>Computer MCP could not initialize: %@</string>
+	<key>Computer MCP couldn't confirm whether %@ applied the change. Check its settings before trying again.</key>
+	<string>Computer MCP couldn't confirm whether %@ applied the change. Check its settings before trying again.</string>
+	<key>Computer MCP couldn't confirm whether %@ finished %@. It last showed: %@. Check its settings, then refresh before trying again.</key>
+	<string>Computer MCP couldn't confirm whether %@ finished %@. It last showed: %@. Check its settings, then refresh before trying again.</string>
+	<key>Computer MCP couldn't read %@'s settings. Nothing was changed.</key>
+	<string>Computer MCP couldn't read %@'s settings. Nothing was changed.</string>
+	<key>Computer MCP detects the executable and version; it does not download it.</key>
+	<string>Computer MCP detects the executable and version; it does not download it.</string>
+	<key>Computer MCP holds these macOS permissions for everything it runs in the sandbox. What each client or plugin may use of them is set above.</key>
+	<string>Computer MCP holds these macOS permissions for everything it runs in the sandbox. What each client or plugin may use of them is set above.</string>
+	<key>Computer MCP runs %@'s own command</key>
+	<string>Computer MCP runs %@'s own command</string>
+	<key>Computer MCP's own command isn't available. Reinstall the App, then try again.</key>
+	<string>Computer MCP's own command isn't available. Reinstall the App, then try again.</string>
+	<key>Computer MCP.app</key>
+	<string>Computer MCP.app</string>
+	<key>Computer MCP.app is not running or its owner-only control socket is unavailable.</key>
+	<string>Computer MCP.app is not running or its owner-only control socket is unavailable.</string>
+	<key>Computer MCP: %@</key>
+	<string>Computer MCP: %@</string>
+	<key>Computer Use</key>
+	<string>Computer Use</string>
+	<key>Configuration</key>
+	<string>Configuration</string>
+	<key>Configuration Profile</key>
+	<string>Configuration Profile</string>
+	<key>Configure</key>
+	<string>Configure</string>
+	<key>Configure ChatGPT</key>
+	<string>Configure ChatGPT</string>
+	<key>Configure Cloudflare</key>
+	<string>Configure Cloudflare</string>
+	<key>Configure OpenAI Secure MCP, start the gateway, and verify a real Connector request.</key>
+	<string>Configure OpenAI Secure MCP, start the gateway, and verify a real Connector request.</string>
+	<key>Confirm Permissions</key>
+	<string>Confirm Permissions</string>
+	<key>Confirm the restored permissions in Privacy &amp; Security to edit this policy.</key>
+	<string>Confirm the restored permissions in Privacy &amp; Security to edit this policy.</string>
+	<key>Confirm your ChatGPT plan supports Connectors</key>
+	<string>Confirm your ChatGPT plan supports Connectors</string>
+	<key>Connect</key>
+	<string>Connect</string>
+	<key>Connect %@ to Computer MCP?</key>
+	<string>Connect %@ to Computer MCP?</string>
+	<key>Connect ChatGPT</key>
+	<string>Connect ChatGPT</string>
+	<key>Connect Codex, Claude Code or Claude Desktop, or copy the stdio command for another client.</key>
+	<string>Connect Codex, Claude Code or Claude Desktop, or copy the stdio command for another client.</string>
+	<key>Connect a local MCP client</key>
+	<string>Connect a local MCP client</string>
+	<key>Connect from the sandbox to devices on your local network.</key>
+	<string>Connect from the sandbox to devices on your local network.</string>
+	<key>Connect the consumer and make one successful MCP request to verify this path.</key>
+	<string>Connect the consumer and make one successful MCP request to verify this path.</string>
+	<key>Connect through Cloudflare</key>
+	<string>Connect through Cloudflare</string>
+	<key>Connected</key>
+	<string>Connected</string>
+	<key>Connected %@</key>
+	<string>Connected %@</string>
+	<key>Connected clients</key>
+	<string>Connected clients</string>
+	<key>Connected clients: %@</key>
+	<string>Connected clients: %@</string>
+	<key>Connected on demand through the MCP proxy.</key>
+	<string>Connected on demand through the MCP proxy.</string>
+	<key>Connected to %@</key>
+	<string>Connected to %@</string>
+	<key>Connection</key>
+	<string>Connection</string>
+	<key>Connection %@</key>
+	<string>Connection %@</string>
+	<key>Connection checks are unavailable in this build.</key>
+	<string>Connection checks are unavailable in this build.</string>
+	<key>Connection defaults</key>
+	<string>Connection defaults</string>
+	<key>Connection status</key>
+	<string>Connection status</string>
+	<key>Connection type restricted</key>
+	<string>Connection type restricted</string>
+	<key>Connections</key>
+	<string>Connections</string>
+	<key>Connect…</key>
+	<string>Connect…</string>
+	<key>Container &amp; Execution</key>
+	<string>Container &amp; Execution</string>
+	<key>Continue</key>
+	<string>Continue</string>
+	<key>Continue the %@ connection from its dedicated setup page.</key>
+	<string>Continue the %@ connection from its dedicated setup page.</string>
+	<key>Contribution</key>
+	<string>Contribution</string>
+	<key>Contribution Requirements</key>
+	<string>Contribution Requirements</string>
+	<key>Control plane unavailable</key>
+	<string>Control plane unavailable</string>
+	<key>Copy</key>
+	<string>Copy</string>
+	<key>Copy stdio Command</key>
+	<string>Copy stdio Command</string>
+	<key>Copy this once into the external consumer. Computer MCP stores it only in Keychain.</key>
+	<string>Copy this once into the external consumer. Computer MCP stores it only in Keychain.</string>
+	<key>Could not create diagnostics archive.</key>
+	<string>Could not create diagnostics archive.</string>
+	<key>Couldn't change %@</key>
+	<string>Couldn't change %@</string>
+	<key>Create a remotely managed named tunnel</key>
+	<string>Create a remotely managed named tunnel</string>
+	<key>Credential endpoint</key>
+	<string>Credential endpoint</string>
+	<key>Credential is missing.</key>
+	<string>Credential is missing.</string>
+	<key>Credential is stored.</key>
+	<string>Credential is stored.</string>
+	<key>Current</key>
+	<string>Current</string>
+	<key>Current Saved Policy</key>
+	<string>Current Saved Policy</string>
+	<key>Current Saved Source</key>
+	<string>Current Saved Source</string>
+	<key>Current tunnel state: failed.</key>
+	<string>Current tunnel state: failed.</string>
+	<key>Current tunnel state: stopped.</key>
+	<string>Current tunnel state: stopped.</string>
+	<key>Current “%@” entry</key>
+	<string>Current “%@” entry</string>
+	<key>Custom Network Access</key>
+	<string>Custom Network Access</string>
+	<key>Custom manifest-defined profile.</key>
+	<string>Custom manifest-defined profile.</string>
+	<key>Custom…</key>
+	<string>Custom…</string>
+	<key>Database</key>
+	<string>Database</string>
+	<key>Declaration digest</key>
+	<string>Declaration digest</string>
+	<key>Declared Permissions</key>
+	<string>Declared Permissions</string>
+	<key>Declared by the plugin</key>
+	<string>Declared by the plugin</string>
+	<key>Declared network</key>
+	<string>Declared network</string>
+	<key>Declared purpose</key>
+	<string>Declared purpose</string>
+	<key>Declared: %@</key>
+	<string>Declared: %@</string>
+	<key>Decline</key>
+	<string>Decline</string>
+	<key>Default setting</key>
+	<string>Default setting</string>
+	<key>Default tool requirements</key>
+	<string>Default tool requirements</string>
+	<key>Degraded</key>
+	<string>Degraded</string>
+	<key>Delete</key>
+	<string>Delete</string>
+	<key>Delete %@?</key>
+	<string>Delete %@?</string>
+	<key>Delete Tunnel</key>
+	<string>Delete Tunnel</string>
+	<key>Denied</key>
+	<string>Denied</string>
+	<key>Deny</key>
+	<string>Deny</string>
+	<key>Dependency ID</key>
+	<string>Dependency ID</string>
+	<key>Dependency names must be unique.</key>
+	<string>Dependency names must be unique.</string>
+	<key>Dependency unavailable</key>
+	<string>Dependency unavailable</string>
+	<key>Desktop</key>
+	<string>Desktop</string>
+	<key>Desktop Control</key>
+	<string>Desktop Control</string>
+	<key>Diagnostics</key>
+	<string>Diagnostics</string>
+	<key>Different entry</key>
+	<string>Different entry</string>
+	<key>Disable</key>
+	<string>Disable</string>
+	<key>Disabled</key>
+	<string>Disabled</string>
+	<key>Discard</key>
+	<string>Discard</string>
+	<key>Discard and Reload</key>
+	<string>Discard and Reload</string>
+	<key>Discard unsaved draft changes and reload?</key>
+	<string>Discard unsaved draft changes and reload?</string>
+	<key>Discard unsaved draft changes?</key>
+	<string>Discard unsaved draft changes?</string>
+	<key>Discovery does not install packages or grant access.</key>
+	<string>Discovery does not install packages or grant access.</string>
+	<key>Documents</key>
+	<string>Documents</string>
+	<key>Don't Allow</key>
+	<string>Don't Allow</string>
+	<key>Done</key>
+	<string>Done</string>
+	<key>Download and install</key>
+	<string>Download and install</string>
+	<key>Download tunnel-client</key>
+	<string>Download tunnel-client</string>
+	<key>Downloading, checking and installing…</key>
+	<string>Downloading, checking and installing…</string>
+	<key>Downloads</key>
+	<string>Downloads</string>
+	<key>Drag Computer MCP.app into the app list</key>
+	<string>Drag Computer MCP.app into the app list</string>
+	<key>Drag into the app list</key>
+	<string>Drag into the app list</string>
+	<key>Drag this app into the Screen &amp; System Audio Recording list, then turn it on.</key>
+	<string>Drag this app into the Screen &amp; System Audio Recording list, then turn it on.</string>
+	<key>Each client runs the App-owned bridge. Changes to a client's settings are shown for review first.</key>
+	<string>Each client runs the App-owned bridge. Changes to a client's settings are shown for review first.</string>
+	<key>Each connection needs approval on this Mac before programs can run without the sandbox.</key>
+	<string>Each connection needs approval on this Mac before programs can run without the sandbox.</string>
+	<key>Each row is one exact argument. No rows means no arguments. Do not enter secrets.</key>
+	<string>Each row is one exact argument. No rows means no arguments. Do not enter secrets.</string>
+	<key>Edit</key>
+	<string>Edit</string>
+	<key>Edit ChatGPT connection</key>
+	<string>Edit ChatGPT connection</string>
+	<key>Edit Cloudflare Tunnel</key>
+	<string>Edit Cloudflare Tunnel</string>
+	<key>Edit Cloudflare connection</key>
+	<string>Edit Cloudflare connection</string>
+	<key>Edit MCP</key>
+	<string>Edit MCP</string>
+	<key>Edit Tunnel</key>
+	<string>Edit Tunnel</string>
+	<key>Edit owner policy for %@</key>
+	<string>Edit owner policy for %@</string>
+	<key>Edit permissions on the source project to change access for its worktrees.</key>
+	<string>Edit permissions on the source project to change access for its worktrees.</string>
+	<key>Edit settings</key>
+	<string>Edit settings</string>
+	<key>Edit the TOML policy. Press Command-S to save.</key>
+	<string>Edit the TOML policy. Press Command-S to save.</string>
+	<key>Edit the shared client profile to change its permissions.</key>
+	<string>Edit the shared client profile to change its permissions.</string>
+	<key>Edit…</key>
+	<string>Edit…</string>
+	<key>Effective Limits</key>
+	<string>Effective Limits</string>
+	<key>Effective access: %@</key>
+	<string>Effective access: %@</string>
+	<key>Elevated</key>
+	<string>Elevated</string>
+	<key>Enable</key>
+	<string>Enable</string>
+	<key>Enabled</key>
+	<string>Enabled</string>
+	<key>Enable…</key>
+	<string>Enable…</string>
+	<key>End access</key>
+	<string>End access</string>
+	<key>Enter a TOML policy to set limits for this owner.</key>
+	<string>Enter a TOML policy to set limits for this owner.</string>
+	<key>Enter one host per line or separate hosts with commas. Use *. to include subdomains.</key>
+	<string>Enter one host per line or separate hosts with commas. Use *. to include subdomains.</string>
+	<key>Enter valid host names or IP addresses for custom network access.</key>
+	<string>Enter valid host names or IP addresses for custom network access.</string>
+	<key>Environment (JSON object)</key>
+	<string>Environment (JSON object)</string>
+	<key>Environment: %@</key>
+	<string>Environment: %@</string>
+	<key>Every permission returns to Ask, and running programs that depend on them end.</key>
+	<string>Every permission returns to Ask, and running programs that depend on them end.</string>
+	<key>Executable</key>
+	<string>Executable</string>
+	<key>Executable needs verification</key>
+	<string>Executable needs verification</string>
+	<key>Executable unavailable</key>
+	<string>Executable unavailable</string>
+	<key>Executed on demand through cli.exec.</key>
+	<string>Executed on demand through cli.exec.</string>
+	<key>Execution</key>
+	<string>Execution</string>
+	<key>Execution Context</key>
+	<string>Execution Context</string>
+	<key>Execution Time</key>
+	<string>Execution Time</string>
+	<key>Execution blocked</key>
+	<string>Execution blocked</string>
+	<key>Execution blocked for %@</key>
+	<string>Execution blocked for %@</string>
+	<key>Execution unavailable</key>
+	<string>Execution unavailable</string>
+	<key>Execution unavailable for %@</key>
+	<string>Execution unavailable for %@</string>
+	<key>Execution: Full Access</key>
+	<string>Execution: Full Access</string>
+	<key>Execution: Sandbox</key>
+	<string>Execution: Sandbox</string>
+	<key>Expired</key>
+	<string>Expired</string>
+	<key>Expires %@</key>
+	<string>Expires %@</string>
+	<key>Explicit whitelist</key>
+	<string>Explicit whitelist</string>
+	<key>Explore Dashboard</key>
+	<string>Explore Dashboard</string>
+	<key>Export</key>
+	<string>Export</string>
+	<key>Export Diagnostics</key>
+	<string>Export Diagnostics</string>
+	<key>Exposure</key>
+	<string>Exposure</string>
+	<key>External</key>
+	<string>External</string>
+	<key>External dependencies are not installed. Use an earlier source in the plugin details to roll back.</key>
+	<string>External dependencies are not installed. Use an earlier source in the plugin details to roll back.</string>
+	<key>External dependencies are user-managed. Host services do not grant local administration.</key>
+	<string>External dependencies are user-managed. Host services do not grant local administration.</string>
+	<key>External executables</key>
+	<string>External executables</string>
+	<key>Fail</key>
+	<string>Fail</string>
+	<key>Failed</key>
+	<string>Failed</string>
+	<key>File and interpreter checks passed; actual startup has not been verified.</key>
+	<string>File and interpreter checks passed; actual startup has not been verified.</string>
+	<key>File checks do not confirm a working integration.</key>
+	<string>File checks do not confirm a working integration.</string>
+	<key>Files &amp; Folders</key>
+	<string>Files &amp; Folders</string>
+	<key>Files &amp; Folders: %@</key>
+	<string>Files &amp; Folders: %@</string>
+	<key>Filter audit</key>
+	<string>Filter audit</string>
+	<key>Finish local MCP setup</key>
+	<string>Finish local MCP setup</string>
+	<key>Folder grants and persistent bookmark health</key>
+	<string>Folder grants and persistent bookmark health</string>
+	<key>For trusted stdio adapters only. Calls retain this connection's project and grants; local approval authority is not delegated.</key>
+	<string>For trusted stdio adapters only. Calls retain this connection's project and grants; local approval authority is not delegated.</string>
+	<key>Foreground</key>
+	<string>Foreground</string>
+	<key>Found in host PATH</key>
+	<string>Found in host PATH</string>
+	<key>Found in installed application</key>
+	<string>Found in installed application</string>
+	<key>Full Access</key>
+	<string>Full Access</string>
+	<key>Full Access Allowed</key>
+	<string>Full Access Allowed</string>
+	<key>Full Access for This Connection</key>
+	<string>Full Access for This Connection</string>
+	<key>Full Access for This Session</key>
+	<string>Full Access for This Session</string>
+	<key>Full Access is turned on from a client's or plugin's page, and needs your confirmation on this Mac.</key>
+	<string>Full Access is turned on from a client's or plugin's page, and needs your confirmation on this Mac.</string>
+	<key>Full Access plugins run outside the sandbox as your user account.</key>
+	<string>Full Access plugins run outside the sandbox as your user account.</string>
+	<key>Full Access runs this provider outside the sandbox with direct access to your Mac as your user account. Sandbox network and read-exception restrictions do not apply.</key>
+	<string>Full Access runs this provider outside the sandbox with direct access to your Mac as your user account. Sandbox network and read-exception restrictions do not apply.</string>
+	<key>Full access</key>
+	<string>Full access</string>
+	<key>Gateway</key>
+	<string>Gateway</string>
+	<key>Gateway Manifest</key>
+	<string>Gateway Manifest</string>
+	<key>Gateway calls</key>
+	<string>Gateway calls</string>
+	<key>Gateway failed to start</key>
+	<string>Gateway failed to start</string>
+	<key>Gateway is running</key>
+	<string>Gateway is running</string>
+	<key>Gateway is stopped</key>
+	<string>Gateway is stopped</string>
+	<key>Gateway profile</key>
+	<string>Gateway profile</string>
+	<key>Gateway runtime and local data plane</key>
+	<string>Gateway runtime and local data plane</string>
+	<key>Gateway state changing</key>
+	<string>Gateway state changing</string>
+	<key>Gateway state is changing</key>
+	<string>Gateway state is changing</string>
+	<key>Generate a new Computer MCP Access Token</key>
+	<string>Generate a new Computer MCP Access Token</string>
+	<key>Generated</key>
+	<string>Generated</string>
+	<key>Get Started</key>
+	<string>Get Started</string>
+	<key>GitHub request failed with HTTP %@.</key>
+	<string>GitHub request failed with HTTP %@.</string>
+	<key>Give Full Access</key>
+	<string>Give Full Access</string>
+	<key>Give Full Access…</key>
+	<string>Give Full Access…</string>
+	<key>Give “%@” Full Access?</key>
+	<string>Give “%@” Full Access?</string>
+	<key>HTTP bearer authentication</key>
+	<string>HTTP bearer authentication</string>
+	<key>HTTP only. Bind the exact server URL and save these settings, then use Manage credential to store the token. An endpoint change requires a new binding; redirects are rejected.</key>
+	<string>HTTP only. Bind the exact server URL and save these settings, then use Manage credential to store the token. An endpoint change requires a new binding; redirects are rejected.</string>
+	<key>HTTP proxy</key>
+	<string>HTTP proxy</string>
+	<key>Headers: %@</key>
+	<string>Headers: %@</string>
+	<key>High</key>
+	<string>High</string>
+	<key>Home</key>
+	<string>Home</string>
+	<key>Host Default</key>
+	<string>Host Default</string>
+	<key>Host authorization cleanup is unconfirmed</key>
+	<string>Host authorization cleanup is unconfirmed</string>
+	<key>Host binding</key>
+	<string>Host binding</string>
+	<key>Host compatibility</key>
+	<string>Host compatibility</string>
+	<key>Host risk classifications (JSON object)</key>
+	<string>Host risk classifications (JSON object)</string>
+	<key>Host session is active</key>
+	<string>Host session is active</string>
+	<key>Hosted in the gateway process.</key>
+	<string>Hosted in the gateway process.</string>
+	<key>Hosts</key>
+	<string>Hosts</string>
+	<key>I understand and consent on this Mac to run this provider with Full Access.</key>
+	<string>I understand and consent on this Mac to run this provider with Full Access.</string>
+	<key>Include trusted hosts</key>
+	<string>Include trusted hosts</string>
+	<key>Independent OpenAI Secure MCP and Cloudflare named tunnel lifecycles</key>
+	<string>Independent OpenAI Secure MCP and Cloudflare named tunnel lifecycles</string>
+	<key>Inherited from project %@</key>
+	<string>Inherited from project %@</string>
+	<key>Input %@</key>
+	<string>Input %@</string>
+	<key>Install</key>
+	<string>Install</string>
+	<key>Install Command Line Tool</key>
+	<string>Install Command Line Tool</string>
+	<key>Install OpenAI tunnel-client</key>
+	<string>Install OpenAI tunnel-client</string>
+	<key>Install archive</key>
+	<string>Install archive</string>
+	<key>Install cloudflared</key>
+	<string>Install cloudflared</string>
+	<key>Install cloudflared from Cloudflare and run the check again.</key>
+	<string>Install cloudflared from Cloudflare and run the check again.</string>
+	<key>Install the App-owned CLI</key>
+	<string>Install the App-owned CLI</string>
+	<key>Install the signed embedded CLI before registering a local MCP client.</key>
+	<string>Install the signed embedded CLI before registering a local MCP client.</string>
+	<key>Install the signed embedded bridge before registering a local MCP client.</key>
+	<string>Install the signed embedded bridge before registering a local MCP client.</string>
+	<key>Install tunnel-client from OpenAI and run the check again.</key>
+	<string>Install tunnel-client from OpenAI and run the check again.</string>
+	<key>Installation location occupied</key>
+	<string>Installation location occupied</string>
+	<key>Installed</key>
+	<string>Installed</string>
+	<key>Installed archive</key>
+	<string>Installed archive</string>
+	<key>Intel</key>
+	<string>Intel</string>
+	<key>Invalid TOML</key>
+	<string>Invalid TOML</string>
+	<key>Invalid plugin request. Check repository identity, tag, query length and page bounds.</key>
+	<string>Invalid plugin request. Check repository identity, tag, query length and page bounds.</string>
+	<key>It now shows: %@.</key>
+	<string>It now shows: %@.</string>
+	<key>Keep Draft on Current Revision</key>
+	<string>Keep Draft on Current Revision</string>
+	<key>Keychain account</key>
+	<string>Keychain account</string>
+	<key>Last error</key>
+	<string>Last error</string>
+	<key>Last export</key>
+	<string>Last export</string>
+	<key>Last used %@</key>
+	<string>Last used %@</string>
+	<key>Latest compatible stable release</key>
+	<string>Latest compatible stable release</string>
+	<key>Launch at login</key>
+	<string>Launch at login</string>
+	<key>Leave blank to follow the macOS HTTPS or HTTP proxy. Credentials are not allowed.</key>
+	<string>Leave blank to follow the macOS HTTPS or HTTP proxy. Credentials are not allowed.</string>
+	<key>Leave blank to use the configured provider or PATH.</key>
+	<string>Leave blank to use the configured provider or PATH.</string>
+	<key>Leave the API key blank to keep the existing Keychain value.</key>
+	<string>Leave the API key blank to keep the existing Keychain value.</string>
+	<key>Load Built-in Defaults</key>
+	<string>Load Built-in Defaults</string>
+	<key>Load release</key>
+	<string>Load release</string>
+	<key>Loaded from official catalog</key>
+	<string>Loaded from official catalog</string>
+	<key>Loading ChatGPT connections</key>
+	<string>Loading ChatGPT connections</string>
+	<key>Loading Cloudflare connections</key>
+	<string>Loading Cloudflare connections</string>
+	<key>Loading Cloudflare tunnels</key>
+	<string>Loading Cloudflare tunnels</string>
+	<key>Loading OpenAI tunnels</key>
+	<string>Loading OpenAI tunnels</string>
+	<key>Loading Owner Policy…</key>
+	<string>Loading Owner Policy…</string>
+	<key>Loading audit log</key>
+	<string>Loading audit log</string>
+	<key>Loading gateway status</key>
+	<string>Loading gateway status</string>
+	<key>Loading plugins</key>
+	<string>Loading plugins</string>
+	<key>Loading profiles</key>
+	<string>Loading profiles</string>
+	<key>Loading projects</key>
+	<string>Loading projects</string>
+	<key>Loading providers</key>
+	<string>Loading providers</string>
+	<key>Loading redacted Cloudflare logs</key>
+	<string>Loading redacted Cloudflare logs</string>
+	<key>Loading redacted Tunnel logs</key>
+	<string>Loading redacted Tunnel logs</string>
+	<key>Loading release archives</key>
+	<string>Loading release archives</string>
+	<key>Local Admin</key>
+	<string>Local Admin</string>
+	<key>Local App and CLI administration. Never exposed through a Tunnel.</key>
+	<string>Local App and CLI administration. Never exposed through a Tunnel.</string>
+	<key>Local CLI</key>
+	<string>Local CLI</string>
+	<key>Local MCP</key>
+	<string>Local MCP</string>
+	<key>Local MCP Server</key>
+	<string>Local MCP Server</string>
+	<key>Local MCP client</key>
+	<string>Local MCP client</string>
+	<key>Local MCP registrations do not include a permission manifest. Permissions default to Ask unless granted below.</key>
+	<string>Local MCP registrations do not include a permission manifest. Permissions default to Ask unless granted below.</string>
+	<key>Local Network</key>
+	<string>Local Network</string>
+	<key>Local command line</key>
+	<string>Local command line</string>
+	<key>Local data plane</key>
+	<string>Local data plane</string>
+	<key>Local development</key>
+	<string>Local development</string>
+	<key>Local only</key>
+	<string>Local only</string>
+	<key>Local process</key>
+	<string>Local process</string>
+	<key>Local socket</key>
+	<string>Local socket</string>
+	<key>Logs</key>
+	<string>Logs</string>
+	<key>Loopback origin 127.0.0.1:%@ · metrics 127.0.0.1:%@</key>
+	<string>Loopback origin 127.0.0.1:%@ · metrics 127.0.0.1:%@</string>
+	<key>Low</key>
+	<string>Low</string>
+	<key>MCP</key>
+	<string>MCP</string>
+	<key>MCP Registrations</key>
+	<string>MCP Registrations</string>
+	<key>MCP Servers</key>
+	<string>MCP Servers</string>
+	<key>MCP credentials require an exact endpoint binding using HTTPS or loopback HTTP, and a valid Keychain account.</key>
+	<string>MCP credentials require an exact endpoint binding using HTTPS or loopback HTTP, and a valid Keychain account.</string>
+	<key>MCP enabled</key>
+	<string>MCP enabled</string>
+	<key>MCP server</key>
+	<string>MCP server</string>
+	<key>Machine Information</key>
+	<string>Machine Information</string>
+	<key>Machine Policy</key>
+	<string>Machine Policy</string>
+	<key>Make a test MCP request</key>
+	<string>Make a test MCP request</string>
+	<key>Manage MCP</key>
+	<string>Manage MCP</string>
+	<key>Manage credential</key>
+	<string>Manage credential</string>
+	<key>Managed Limits</key>
+	<string>Managed Limits</string>
+	<key>Managed limits cap what can be granted here. A source that can't be read limits everything it could limit until it can be read.</key>
+	<string>Managed limits cap what can be granted here. A source that can't be read limits everything it could limit until it can be read.</string>
+	<key>Managed limits prevent Full Access.</key>
+	<string>Managed limits prevent Full Access.</string>
+	<key>Managed limits restrict these choices.</key>
+	<string>Managed limits restrict these choices.</string>
+	<key>Manifest</key>
+	<string>Manifest</string>
+	<key>Manifest SHA-256</key>
+	<string>Manifest SHA-256</string>
+	<key>Manual registration</key>
+	<string>Manual registration</string>
+	<key>Memory</key>
+	<string>Memory</string>
+	<key>Metrics port</key>
+	<string>Metrics port</string>
+	<key>Missing</key>
+	<string>Missing</string>
+	<key>Named tunnel</key>
+	<string>Named tunnel</string>
+	<key>Named tunnel credentials are incomplete</key>
+	<string>Named tunnel credentials are incomplete</string>
+	<key>Named tunnel credentials are ready</key>
+	<string>Named tunnel credentials are ready</string>
+	<key>Named-tunnel token</key>
+	<string>Named-tunnel token</string>
+	<key>Need help?</key>
+	<string>Need help?</string>
+	<key>Needs a Computer MCP update</key>
+	<string>Needs a Computer MCP update</string>
+	<key>Needs a plugin update</key>
+	<string>Needs a plugin update</string>
+	<key>Needs attention</key>
+	<string>Needs attention</string>
+	<key>Network</key>
+	<string>Network</string>
+	<key>Network Volumes</key>
+	<string>Network Volumes</string>
+	<key>Network: %@</key>
+	<string>Network: %@</string>
+	<key>Network: Any Host</key>
+	<string>Network: Any Host</string>
+	<key>Network: None</key>
+	<string>Network: None</string>
+	<key>Network: Trusted Hosts</key>
+	<string>Network: Trusted Hosts</string>
+	<key>Network: Trusted Hosts and %@</key>
+	<string>Network: Trusted Hosts and %@</string>
+	<key>New command</key>
+	<string>New command</string>
+	<key>New connections can restore Full Access only while the approved permissions remain unchanged. Revoke to require your approval again.</key>
+	<string>New connections can restore Full Access only while the approved permissions remain unchanged. Revoke to require your approval again.</string>
+	<key>New connections use this profile. Existing connections keep their current profile; active work is not stopped.</key>
+	<string>New connections use this profile. Existing connections keep their current profile; active work is not stopped.</string>
+	<key>New plugins start disabled. Updates keep host settings and earlier versions. External dependencies are not installed.</key>
+	<string>New plugins start disabled. Updates keep host settings and earlier versions. External dependencies are not installed.</string>
+	<key>Next page</key>
+	<string>Next page</string>
+	<key>Next step</key>
+	<string>Next step</string>
+	<key>No Policy Ceiling</key>
+	<string>No Policy Ceiling</string>
+	<key>No approval</key>
+	<string>No approval</string>
+	<key>No audit entries</key>
+	<string>No audit entries</string>
+	<key>No clients or plugins are connected yet.</key>
+	<string>No clients or plugins are connected yet.</string>
+	<key>No clients or plugins have asked for this permission.</key>
+	<string>No clients or plugins have asked for this permission.</string>
+	<key>No clients, plugins, or local servers are available.</key>
+	<string>No clients, plugins, or local servers are available.</string>
+	<key>No connected clients</key>
+	<string>No connected clients</string>
+	<key>No current end-to-end request has been observed</key>
+	<string>No current end-to-end request has been observed</string>
+	<key>No diagnostic checks were returned.</key>
+	<string>No diagnostic checks were returned.</string>
+	<key>No executable was resolved for this dependency. Follow its setup instructions or set a host binding.</key>
+	<string>No executable was resolved for this dependency. Follow its setup instructions or set a host binding.</string>
+	<key>No installable archives on this release page.</key>
+	<string>No installable archives on this release page.</string>
+	<key>No matching audit entries</key>
+	<string>No matching audit entries</string>
+	<key>No matching plugins.</key>
+	<string>No matching plugins.</string>
+	<key>No named tunnels configured</key>
+	<string>No named tunnels configured</string>
+	<key>No output.</key>
+	<string>No output.</string>
+	<key>No plugins registered</key>
+	<string>No plugins registered</string>
+	<key>No policy is saved for this owner.</key>
+	<string>No policy is saved for this owner.</string>
+	<key>No profile allows Cloudflare tunnel connections. Allow them in a profile to approve this request.</key>
+	<string>No profile allows Cloudflare tunnel connections. Allow them in a profile to approve this request.</string>
+	<key>No profiles configured</key>
+	<string>No profiles configured</string>
+	<key>No project is registered</key>
+	<string>No project is registered</string>
+	<key>No providers configured</key>
+	<string>No providers configured</string>
+	<key>No readable saved policy for this owner.</key>
+	<string>No readable saved policy for this owner.</string>
+	<key>No registered projects</key>
+	<string>No registered projects</string>
+	<key>No resolvable read exceptions.</key>
+	<string>No resolvable read exceptions.</string>
+	<key>No selected or bundled source is available. Select an installed source or register a package.</key>
+	<string>No selected or bundled source is available. Select an installed source or register a package.</string>
+	<key>No specific tool requirements declared.</key>
+	<string>No specific tool requirements declared.</string>
+	<key>No tools selected</key>
+	<string>No tools selected</string>
+	<key>No tunnels configured</key>
+	<string>No tunnels configured</string>
+	<key>None</key>
+	<string>None</string>
+	<key>Normal App use does not require a TOML file.</key>
+	<string>Normal App use does not require a TOML file.</string>
+	<key>Not Allowed</key>
+	<string>Not Allowed</string>
+	<key>Not Requested</key>
+	<string>Not Requested</string>
+	<key>Not Set</key>
+	<string>Not Set</string>
+	<key>Not allowed by %@</key>
+	<string>Not allowed by %@</string>
+	<key>Not allowed while %@ can't be read</key>
+	<string>Not allowed while %@ can't be read</string>
+	<key>Not applicable</key>
+	<string>Not applicable</string>
+	<key>Not available for this Mac</key>
+	<string>Not available for this Mac</string>
+	<key>Not checked</key>
+	<string>Not checked</string>
+	<key>Not configured</key>
+	<string>Not configured</string>
+	<key>Not connected</key>
+	<string>Not connected</string>
+	<key>Not installed</key>
+	<string>Not installed</string>
+	<key>Not installed, or its command didn't respond.</key>
+	<string>Not installed, or its command didn't respond.</string>
+	<key>Not loaded</key>
+	<string>Not loaded</string>
+	<key>Not registered</key>
+	<string>Not registered</string>
+	<key>Not resolved</key>
+	<string>Not resolved</string>
+	<key>Not verified</key>
+	<string>Not verified</string>
+	<key>Not verified: tool execution, remote profile permissions, system permissions and persistent host services.</key>
+	<string>Not verified: tool execution, remote profile permissions, system permissions and persistent host services.</string>
+	<key>OK</key>
+	<string>OK</string>
+	<key>Observe</key>
+	<string>Observe</string>
+	<key>Official plugin search</key>
+	<string>Official plugin search</string>
+	<key>Official source identifies the publisher, not a verified artifact or signature. Discovery does not install packages or grant access.</key>
+	<string>Official source identifies the publisher, not a verified artifact or signature. Discovery does not install packages or grant access.</string>
+	<key>Only This Time</key>
+	<string>Only This Time</string>
+	<key>Only This Time covers the retried request and the program it starts.</key>
+	<string>Only This Time covers the retried request and the program it starts.</string>
+	<key>Only grant raw arguments to a trusted CLI. Structured command trees reject this setting.</key>
+	<string>Only grant raw arguments to a trusted CLI. Structured command trees reject this setting.</string>
+	<key>Only this installation's owned files will be removed. Host settings, other versions and external dependencies will be kept.</key>
+	<string>Only this installation's owned files will be removed. Host settings, other versions and external dependencies will be kept.</string>
+	<key>Only this reviewed record will be retired. No process or downstream action will be started.</key>
+	<string>Only this reviewed record will be retired. No process or downstream action will be started.</string>
+	<key>Open</key>
+	<string>Open</string>
+	<key>Open %@ once, then try again.</key>
+	<string>Open %@ once, then try again.</string>
+	<key>Open Advanced Diagnostics</key>
+	<string>Open Advanced Diagnostics</string>
+	<key>Open ChatGPT</key>
+	<string>Open ChatGPT</string>
+	<key>Open Cloudflare install documentation</key>
+	<string>Open Cloudflare install documentation</string>
+	<key>Open Cloudflare installation documentation</key>
+	<string>Open Cloudflare installation documentation</string>
+	<key>Open Computer MCP</key>
+	<string>Open Computer MCP</string>
+	<key>Open Computer MCP and inspect the command line tool installation.</key>
+	<string>Open Computer MCP and inspect the command line tool installation.</string>
+	<key>Open Diagnostics</key>
+	<string>Open Diagnostics</string>
+	<key>Open Diagnostics for the latest failure.</key>
+	<string>Open Diagnostics for the latest failure.</string>
+	<key>Open OpenAI MCP documentation</key>
+	<string>Open OpenAI MCP documentation</string>
+	<key>Open OpenAI setup documentation</key>
+	<string>Open OpenAI setup documentation</string>
+	<key>Open System Settings</key>
+	<string>Open System Settings</string>
+	<key>Open pinned declaration</key>
+	<string>Open pinned declaration</string>
+	<key>OpenAI</key>
+	<string>OpenAI</string>
+	<key>OpenAI API key</key>
+	<string>OpenAI API key</string>
+	<key>OpenAI Secure MCP connection</key>
+	<string>OpenAI Secure MCP connection</string>
+	<key>OpenAI Secure MCP setup, lifecycle, and real-request verification</key>
+	<string>OpenAI Secure MCP setup, lifecycle, and real-request verification</string>
+	<key>OpenAI Tunnel diagnostics failed</key>
+	<string>OpenAI Tunnel diagnostics failed</string>
+	<key>OpenAI tunnel-client is available</key>
+	<string>OpenAI tunnel-client is available</string>
+	<key>OpenAI tunnel-client is unavailable</key>
+	<string>OpenAI tunnel-client is unavailable</string>
+	<key>Opens the %@ setup page</key>
+	<string>Opens the %@ setup page</string>
+	<key>Operation Failed</key>
+	<string>Operation Failed</string>
+	<key>Optional</key>
+	<string>Optional</string>
+	<key>Optional initial permissions</key>
+	<string>Optional initial permissions</string>
+	<key>Origin port</key>
+	<string>Origin port</string>
+	<key>Other MCP clients</key>
+	<string>Other MCP clients</string>
+	<key>Other principals’ host tools and sandboxed programs cannot read files in the plugin’s sandbox container. Files in shared projects follow the project’s permissions.</key>
+	<string>Other principals’ host tools and sandboxed programs cannot read files in the plugin’s sandbox container. Files in shared projects follow the project’s permissions.</string>
+	<key>Outbound Network</key>
+	<string>Outbound Network</string>
+	<key>Output</key>
+	<string>Output</string>
+	<key>Outstanding calls may have an unknown outcome. Reconnect and inspect before retrying.</key>
+	<string>Outstanding calls may have an unknown outcome. Reconnect and inspect before retrying.</string>
+	<key>Override process arguments</key>
+	<string>Override process arguments</string>
+	<key>Owner Policy</key>
+	<string>Owner Policy</string>
+	<key>Owner Policy for %@</key>
+	<string>Owner Policy for %@</string>
+	<key>Owner policies are saved in Computer MCP. Use the machine policy file or configuration profile to manage limits for this Mac.</key>
+	<string>Owner policies are saved in Computer MCP. Use the machine policy file or configuration profile to manage limits for this Mac.</string>
+	<key>Owner policy cannot be read.</key>
+	<string>Owner policy cannot be read.</string>
+	<key>Owner policy draft</key>
+	<string>Owner policy draft</string>
+	<key>Owner policy requires confirmation.</key>
+	<string>Owner policy requires confirmation.</string>
+	<key>Package checks finished</key>
+	<string>Package checks finished</string>
+	<key>Package files and saved host settings will be kept.</key>
+	<string>Package files and saved host settings will be kept.</string>
+	<key>Packages that contribute MCP, CLI, and skills</key>
+	<string>Packages that contribute MCP, CLI, and skills</string>
+	<key>Pass</key>
+	<string>Pass</string>
+	<key>Passed</key>
+	<string>Passed</string>
+	<key>Permission Source</key>
+	<string>Permission Source</string>
+	<key>Permission outside plugin declarations</key>
+	<string>Permission outside plugin declarations</string>
+	<key>Permission review required</key>
+	<string>Permission review required</string>
+	<key>Permission source unavailable</key>
+	<string>Permission source unavailable</string>
+	<key>Permissions</key>
+	<string>Permissions</string>
+	<key>Permissions are paused</key>
+	<string>Permissions are paused</string>
+	<key>Permissions for selected tools, projects, and connections</key>
+	<string>Permissions for selected tools, projects, and connections</string>
+	<key>Permissions were restored from an earlier state. Review and confirm them before enabling.</key>
+	<string>Permissions were restored from an earlier state. Review and confirm them before enabling.</string>
+	<key>Permissions…</key>
+	<string>Permissions…</string>
+	<key>Plugin</key>
+	<string>Plugin</string>
+	<key>Plugin Declaration</key>
+	<string>Plugin Declaration</string>
+	<key>Plugin ID</key>
+	<string>Plugin ID</string>
+	<key>Plugin Package</key>
+	<string>Plugin Package</string>
+	<key>Plugin declaration allows at most %@</key>
+	<string>Plugin declaration allows at most %@</string>
+	<key>Plugin execution mode is set when you review its declarations.</key>
+	<string>Plugin execution mode is set when you review its declarations.</string>
+	<key>Plugin file recovery could not finish. Check the App-owned storage and retry recovery.</key>
+	<string>Plugin file recovery could not finish. Check the App-owned storage and retry recovery.</string>
+	<key>Plugin file recovery is incomplete. Missing, unverified or still-referenced directories require attention.</key>
+	<string>Plugin file recovery is incomplete. Missing, unverified or still-referenced directories require attention.</string>
+	<key>Plugin installed</key>
+	<string>Plugin installed</string>
+	<key>Plugin request failed with HTTP %@.</key>
+	<string>Plugin request failed with HTTP %@.</string>
+	<key>Plugin settings</key>
+	<string>Plugin settings</string>
+	<key>Plugin settings changed. Close and reopen this window before installing.</key>
+	<string>Plugin settings changed. Close and reopen this window before installing.</string>
+	<key>Plugin settings changed. Reload before applying this change.</key>
+	<string>Plugin settings changed. Reload before applying this change.</string>
+	<key>Plugins</key>
+	<string>Plugins</string>
+	<key>Policy Source</key>
+	<string>Policy Source</string>
+	<key>Policy Source Changed</key>
+	<string>Policy Source Changed</string>
+	<key>Policy cleared. Reload to see the current limits.</key>
+	<string>Policy cleared. Reload to see the current limits.</string>
+	<key>Policy contains malformed, unsupported or unavailable settings.</key>
+	<string>Policy contains malformed, unsupported or unavailable settings.</string>
+	<key>Policy saved. Reload to see the current limits.</key>
+	<string>Policy saved. Reload to see the current limits.</string>
+	<key>Policy source snapshot is missing or ambiguous.</key>
+	<string>Policy source snapshot is missing or ambiguous.</string>
+	<key>Prepare the App-owned CLI bridge for local MCP clients.</key>
+	<string>Prepare the App-owned CLI bridge for local MCP clients.</string>
+	<key>Preparing local MCP command</key>
+	<string>Preparing local MCP command</string>
+	<key>Prerelease</key>
+	<string>Prerelease</string>
+	<key>Prerequisites</key>
+	<string>Prerequisites</string>
+	<key>Preserve downstream tool names</key>
+	<string>Preserve downstream tool names</string>
+	<key>Previous MCP cleanup is unconfirmed. Review the process records before starting another connection.</key>
+	<string>Previous MCP cleanup is unconfirmed. Review the process records before starting another connection.</string>
+	<key>Previous page</key>
+	<string>Previous page</string>
+	<key>Previous results are shown below; the latest request failed.</key>
+	<string>Previous results are shown below; the latest request failed.</string>
+	<key>Privacy &amp; Security</key>
+	<string>Privacy &amp; Security</string>
+	<key>Process ID</key>
+	<string>Process ID</string>
+	<key>Process cleanup needs recovery</key>
+	<string>Process cleanup needs recovery</string>
+	<key>Process has stopped</key>
+	<string>Process has stopped</string>
+	<key>Process record is damaged</key>
+	<string>Process record is damaged</string>
+	<key>Process record recovered. Check the connection again when ready; no process was started.</key>
+	<string>Process record recovered. Check the connection again when ready; no process was started.</string>
+	<key>Profile</key>
+	<string>Profile</string>
+	<key>Profile ID</key>
+	<string>Profile ID</string>
+	<key>Profile grants are unchanged. A registration cannot grant itself permissions.</key>
+	<string>Profile grants are unchanged. A registration cannot grant itself permissions.</string>
+	<key>Profile revision: %@ · Permission revision: %@</key>
+	<string>Profile revision: %@ · Permission revision: %@</string>
+	<key>Profiles</key>
+	<string>Profiles</string>
+	<key>Programs may use Full access with client consent.</key>
+	<string>Programs may use Full access with client consent.</string>
+	<key>Programs run as you without the sandbox. They don't inherit Computer MCP's macOS permissions.</key>
+	<string>Programs run as you without the sandbox. They don't inherit Computer MCP's macOS permissions.</string>
+	<key>Programs run in the sandbox and change projects only in worktrees.</key>
+	<string>Programs run in the sandbox and change projects only in worktrees.</string>
+	<key>Programs run in the sandbox.</key>
+	<string>Programs run in the sandbox.</string>
+	<key>Project</key>
+	<string>Project</string>
+	<key>Project-scoped tools can use the registered folder grants.</key>
+	<string>Project-scoped tools can use the registered folder grants.</string>
+	<key>Project: None</key>
+	<string>Project: None</string>
+	<key>Project: Read</key>
+	<string>Project: Read</string>
+	<key>Project: Read &amp; Write</key>
+	<string>Project: Read &amp; Write</string>
+	<key>Projects</key>
+	<string>Projects</string>
+	<key>Provider '%@' has no independent doctor contract.</key>
+	<string>Provider '%@' has no independent doctor contract.</string>
+	<key>Provider '%@' is configuration-driven and starts on demand with the gateway.</key>
+	<string>Provider '%@' is configuration-driven and starts on demand with the gateway.</string>
+	<key>Provider '%@' is configuration-driven. Disable it in the active manifest.</key>
+	<string>Provider '%@' is configuration-driven. Disable it in the active manifest.</string>
+	<key>Provider diagnostics failed</key>
+	<string>Provider diagnostics failed</string>
+	<key>Provider source unavailable</key>
+	<string>Provider source unavailable</string>
+	<key>Providers</key>
+	<string>Providers</string>
+	<key>Provision or update the tunnel-client profile</key>
+	<string>Provision or update the tunnel-client profile</string>
+	<key>Public hostname</key>
+	<string>Public hostname</string>
+	<key>Publish the access-token-protected gateway through your named tunnel.</key>
+	<string>Publish the access-token-protected gateway through your named tunnel.</string>
+	<key>Published %@</key>
+	<string>Published %@</string>
+	<key>Publisher ID</key>
+	<string>Publisher ID</string>
+	<key>Query the macOS unified log, which can reveal activity on this Mac.</key>
+	<string>Query the macOS unified log, which can reveal activity on this Mac.</string>
+	<key>Quick Tunnel and unauthenticated origins are not supported for this journey.</key>
+	<string>Quick Tunnel and unauthenticated origins are not supported for this journey.</string>
+	<key>Quit %@, then try again.</key>
+	<string>Quit %@, then try again.</string>
+	<key>Quit Computer MCP</key>
+	<string>Quit Computer MCP</string>
+	<key>Read</key>
+	<string>Read</string>
+	<key>Read &amp; Write</key>
+	<string>Read &amp; Write</string>
+	<key>Read system, network and service status.</key>
+	<string>Read system, network and service status.</string>
+	<key>Read the skill library.</key>
+	<string>Read the skill library.</string>
+	<key>Read-Only</key>
+	<string>Read-Only</string>
+	<key>Read-only observation, Skills, system state, and project inspection.</key>
+	<string>Read-only observation, Skills, system state, and project inspection.</string>
+	<key>Readiness check unavailable</key>
+	<string>Readiness check unavailable</string>
+	<key>Reading skills does not execute scripts or grant tool access.</key>
+	<string>Reading skills does not execute scripts or grant tool access.</string>
+	<key>Ready</key>
+	<string>Ready</string>
+	<key>Received</key>
+	<string>Received</string>
+	<key>Reconnect Tunnel</key>
+	<string>Reconnect Tunnel</string>
+	<key>Reconnect attempt %@</key>
+	<string>Reconnect attempt %@</string>
+	<key>Recover released record</key>
+	<string>Recover released record</string>
+	<key>Recovery requires released process locks and confirmed host authorization cleanup. Damaged or unconfirmed records remain blocked.</key>
+	<string>Recovery requires released process locks and confirmed host authorization cleanup. Damaged or unconfirmed records remain blocked.</string>
+	<key>Redacted capability decisions and execution outcomes</key>
+	<string>Redacted capability decisions and execution outcomes</string>
+	<key>Reexport tools</key>
+	<string>Reexport tools</string>
+	<key>Refresh</key>
+	<string>Refresh</string>
+	<key>Refresh catalog</key>
+	<string>Refresh catalog</string>
+	<key>Refresh registration</key>
+	<string>Refresh registration</string>
+	<key>Refresh the App, gateway, and configured transports.</key>
+	<string>Refresh the App, gateway, and configured transports.</string>
+	<key>Refreshing</key>
+	<string>Refreshing</string>
+	<key>Register a project before checking a connection.</key>
+	<string>Register a project before checking a connection.</string>
+	<key>Register providers in the active configuration before starting them.</key>
+	<string>Register providers in the active configuration before starting them.</string>
+	<key>Registration ID</key>
+	<string>Registration ID</string>
+	<key>Registration diagnostics</key>
+	<string>Registration diagnostics</string>
+	<key>Registration will be disabled.</key>
+	<string>Registration will be disabled.</string>
+	<key>Registration will be enabled.</key>
+	<string>Registration will be enabled.</string>
+	<key>Release</key>
+	<string>Release</string>
+	<key>Release ID</key>
+	<string>Release ID</string>
+	<key>Release tag</key>
+	<string>Release tag</string>
+	<key>Reload</key>
+	<string>Reload</string>
+	<key>Reload Now</key>
+	<string>Reload Now</string>
+	<key>Reload Required</key>
+	<string>Reload Required</string>
+	<key>Remote MCP client</key>
+	<string>Remote MCP client</string>
+	<key>Remote connections</key>
+	<string>Remote connections</string>
+	<key>Remotely managed named tunnels only. The App owns the access-token-protected loopback origin.</key>
+	<string>Remotely managed named tunnels only. The App owns the access-token-protected loopback origin.</string>
+	<key>Removable Volumes</key>
+	<string>Removable Volumes</string>
+	<key>Remove</key>
+	<string>Remove</string>
+	<key>Remove %@</key>
+	<string>Remove %@</string>
+	<key>Remove %@?</key>
+	<string>Remove %@?</string>
+	<key>Remove Computer MCP from %@?</key>
+	<string>Remove Computer MCP from %@?</string>
+	<key>Remove argument</key>
+	<string>Remove argument</string>
+	<key>Remove binding</key>
+	<string>Remove binding</string>
+	<key>Remove credential</key>
+	<string>Remove credential</string>
+	<key>Remove local registration?</key>
+	<string>Remove local registration?</string>
+	<key>Remove project grant</key>
+	<string>Remove project grant</string>
+	<key>Remove registration</key>
+	<string>Remove registration</string>
+	<key>Removed from %@</key>
+	<string>Removed from %@</string>
+	<key>Remove…</key>
+	<string>Remove…</string>
+	<key>Reopen Claude Desktop.</key>
+	<string>Reopen Claude Desktop.</string>
+	<key>Repair %@</key>
+	<string>Repair %@</string>
+	<key>Repair Project</key>
+	<string>Repair Project</string>
+	<key>Repair…</key>
+	<string>Repair…</string>
+	<key>Replace Draft</key>
+	<string>Replace Draft</string>
+	<key>Replace OpenAI API key</key>
+	<string>Replace OpenAI API key</string>
+	<key>Replace named-tunnel token</key>
+	<string>Replace named-tunnel token</string>
+	<key>Replace the editor content with the built-in manifest</key>
+	<string>Replace the editor content with the built-in manifest</string>
+	<key>Repository ID</key>
+	<string>Repository ID</string>
+	<key>Request %@</key>
+	<string>Request %@</string>
+	<key>Request ID</key>
+	<string>Request ID</string>
+	<key>Requested: %@</key>
+	<string>Requested: %@</string>
+	<key>Requests</key>
+	<string>Requests</string>
+	<key>Required for pointer, keyboard, scroll, and Accessibility actions.</key>
+	<string>Required for pointer, keyboard, scroll, and Accessibility actions.</string>
+	<key>Required for window observation and screenshots.</key>
+	<string>Required for window observation and screenshots.</string>
+	<key>Requires approval</key>
+	<string>Requires approval</string>
+	<key>Requires connection approval</key>
+	<string>Requires connection approval</string>
+	<key>Reset path</key>
+	<string>Reset path</string>
+	<key>Resolved %@</key>
+	<string>Resolved %@</string>
+	<key>Resolved component</key>
+	<string>Resolved component</string>
+	<key>Resolved file: %@</key>
+	<string>Resolved file: %@</string>
+	<key>Resolved folder: %@</key>
+	<string>Resolved folder: %@</string>
+	<key>Resolved registrations do not confirm a working connection. Caller permissions still apply.</key>
+	<string>Resolved registrations do not confirm a working connection. Caller permissions still apply.</string>
+	<key>Result unknown</key>
+	<string>Result unknown</string>
+	<key>Result unknown — refresh to check</key>
+	<string>Result unknown — refresh to check</string>
+	<key>Results for</key>
+	<string>Results for</string>
+	<key>Retained Output</key>
+	<string>Retained Output</string>
+	<key>Retention</key>
+	<string>Retention</string>
+	<key>Retry</key>
+	<string>Retry</string>
+	<key>Retry All Checks</key>
+	<string>Retry All Checks</string>
+	<key>Retry file recovery</key>
+	<string>Retry file recovery</string>
+	<key>Returns to</key>
+	<string>Returns to</string>
+	<key>Revert</key>
+	<string>Revert</string>
+	<key>Review</key>
+	<string>Review</string>
+	<key>Review Current Source</key>
+	<string>Review Current Source</string>
+	<key>Review MCP change</key>
+	<string>Review MCP change</string>
+	<key>Review Permissions…</key>
+	<string>Review Permissions…</string>
+	<key>Review Provider Enablement</key>
+	<string>Review Provider Enablement</string>
+	<key>Review changes…</key>
+	<string>Review changes…</string>
+	<key>Review exactly what changes. Nothing is written until you confirm.</key>
+	<string>Review exactly what changes. Nothing is written until you confirm.</string>
+	<key>Review required</key>
+	<string>Review required</string>
+	<key>Review the change before applying it.</key>
+	<string>Review the change before applying it.</string>
+	<key>Revision</key>
+	<string>Revision</string>
+	<key>Revision %@ will be validated and activated. Existing connections and running tasks will be preserved.</key>
+	<string>Revision %@ will be validated and activated. Existing connections and running tasks will be preserved.</string>
+	<key>Revoke</key>
+	<string>Revoke</string>
+	<key>Revoke All Access</key>
+	<string>Revoke All Access</string>
+	<key>Revoke All Access…</key>
+	<string>Revoke All Access…</string>
+	<key>Revoke all access for “%@”?</key>
+	<string>Revoke all access for “%@”?</string>
+	<key>Revoking access ends work that uses it.</key>
+	<string>Revoking access ends work that uses it.</string>
+	<key>Revoking ends a client's sign-in immediately. It must ask for your approval again to reconnect.</key>
+	<string>Revoking ends a client's sign-in immediately. It must ask for your approval again to reconnect.</string>
+	<key>Roll Back</key>
+	<string>Roll Back</string>
+	<key>Roll back configuration?</key>
+	<string>Roll back configuration?</string>
+	<key>Roll back to this revision</key>
+	<string>Roll back to this revision</string>
+	<key>Run Diagnostics</key>
+	<string>Run Diagnostics</string>
+	<key>Run Tunnel Diagnostics</key>
+	<string>Run Tunnel Diagnostics</string>
+	<key>Run programs without the sandbox, as you, in any directory. Host tools still check every permission.</key>
+	<string>Run programs without the sandbox, as you, in any directory. Host tools still check every permission.</string>
+	<key>Running</key>
+	<string>Running</string>
+	<key>Running diagnostics</key>
+	<string>Running diagnostics</string>
+	<key>Runtime checks and redacted support bundle</key>
+	<string>Runtime checks and redacted support bundle</string>
+	<key>Runtime version</key>
+	<string>Runtime version</string>
+	<key>SHA-256</key>
+	<string>SHA-256</string>
+	<key>Safe system tools remain available. Add a project before using project-scoped tools.</key>
+	<string>Safe system tools remain available. Add a project before using project-scoped tools.</string>
+	<key>Same as %1$@ (%2$@)</key>
+	<string>Same as %1$@ (%2$@)</string>
+	<key>Sandbox</key>
+	<string>Sandbox</string>
+	<key>Sandbox Network</key>
+	<string>Sandbox Network</string>
+	<key>Sandbox Read Exceptions</key>
+	<string>Sandbox Read Exceptions</string>
+	<key>Sandbox and Full Access (%@)</key>
+	<string>Sandbox and Full Access (%@)</string>
+	<key>Sandbox container</key>
+	<string>Sandbox container</string>
+	<key>Sandboxed local servers use a private container for their state.</key>
+	<string>Sandboxed local servers use a private container for their state.</string>
+	<key>Save</key>
+	<string>Save</string>
+	<key>Save the OpenAI Tunnel API key in Computer MCP. It will remain in Keychain.</key>
+	<string>Save the OpenAI Tunnel API key in Computer MCP. It will remain in Keychain.</string>
+	<key>Save the named-tunnel token and generate a Computer MCP Access Token.</key>
+	<string>Save the named-tunnel token and generate a Computer MCP Access Token.</string>
+	<key>Saved</key>
+	<string>Saved</string>
+	<key>Saved Policy Source</key>
+	<string>Saved Policy Source</string>
+	<key>Saved Tunnel profiles require different gateway profiles. Start only compatible Tunnels.</key>
+	<string>Saved Tunnel profiles require different gateway profiles. Start only compatible Tunnels.</string>
+	<key>Saved by the owner</key>
+	<string>Saved by the owner</string>
+	<key>Saved client approvals</key>
+	<string>Saved client approvals</string>
+	<key>Saved permissions are revoked and running programs that depend on them end.</key>
+	<string>Saved permissions are revoked and running programs that depend on them end.</string>
+	<key>Scoped host services</key>
+	<string>Scoped host services</string>
+	<key>Screen</key>
+	<string>Screen</string>
+	<key>Screen Recording</key>
+	<string>Screen Recording</string>
+	<key>Search</key>
+	<string>Search</string>
+	<key>Search names, descriptions, or repositories</key>
+	<string>Search names, descriptions, or repositories</string>
+	<key>Search official plugins</key>
+	<string>Search official plugins</string>
+	<key>Search published official plugins. Results are filtered for this Mac.</key>
+	<string>Search published official plugins. Results are filtered for this Mac.</string>
+	<key>Search, filters and pages use the cached catalog.</key>
+	<string>Search, filters and pages use the cached catalog.</string>
+	<key>Searching official catalog</key>
+	<string>Searching official catalog</string>
+	<key>Secure Tunnel</key>
+	<string>Secure Tunnel</string>
+	<key>Selected</key>
+	<string>Selected</string>
+	<key>Selected by</key>
+	<string>Selected by</string>
+	<key>Selected package and declaration identity were validated.</key>
+	<string>Selected package and declaration identity were validated.</string>
+	<key>Selected tools only</key>
+	<string>Selected tools only</string>
+	<key>Server URL</key>
+	<string>Server URL</string>
+	<key>Server version</key>
+	<string>Server version</string>
+	<key>Set by %@</key>
+	<string>Set by %@</string>
+	<key>Settings can't be read</key>
+	<string>Settings can't be read</string>
+	<key>Settings file</key>
+	<string>Settings file</string>
+	<key>Settings link unavailable</key>
+	<string>Settings link unavailable</string>
+	<key>Shared profile: %@</key>
+	<string>Shared profile: %@</string>
+	<key>Show %@ in Finder</key>
+	<string>Show %@ in Finder</string>
+	<key>Show Cloudflare logs</key>
+	<string>Show Cloudflare logs</string>
+	<key>Show Tunnel logs</key>
+	<string>Show Tunnel logs</string>
+	<key>Show Welcome</key>
+	<string>Show Welcome</string>
+	<key>Show in Finder</key>
+	<string>Show in Finder</string>
+	<key>Showing bounded log tails</key>
+	<string>Showing bounded log tails</string>
+	<key>Sign-in for clients such as claude.ai</key>
+	<string>Sign-in for clients such as claude.ai</string>
+	<key>Sign-in requests</key>
+	<string>Sign-in requests</string>
+	<key>Sign-in requests waiting: %@</key>
+	<string>Sign-in requests waiting: %@</string>
+	<key>Signed-in remote clients</key>
+	<string>Signed-in remote clients</string>
+	<key>Skills</key>
+	<string>Skills</string>
+	<key>Skills enabled</key>
+	<string>Skills enabled</string>
+	<key>Socket</key>
+	<string>Socket</string>
+	<key>Some catalog data is unavailable. Review the details below.</key>
+	<string>Some catalog data is unavailable. Review the details below.</string>
+	<key>Some package checks failed</key>
+	<string>Some package checks failed</string>
+	<key>Source</key>
+	<string>Source</string>
+	<key>Source details</key>
+	<string>Source details</string>
+	<key>Source digest</key>
+	<string>Source digest</string>
+	<key>Source repository</key>
+	<string>Source repository</string>
+	<key>Source review required</key>
+	<string>Source review required</string>
+	<key>Source revision %@</key>
+	<string>Source revision %@</string>
+	<key>Source: %@</key>
+	<string>Source: %@</string>
+	<key>Sources</key>
+	<string>Sources</string>
+	<key>Standard error</key>
+	<string>Standard error</string>
+	<key>Standard output</key>
+	<string>Standard output</string>
+	<key>Start</key>
+	<string>Start</string>
+	<key>Start Gateway</key>
+	<string>Start Gateway</string>
+	<key>Start Tunnel</key>
+	<string>Start Tunnel</string>
+	<key>Start a new Claude Code session.</key>
+	<string>Start a new Claude Code session.</string>
+	<key>Start a new Codex session.</key>
+	<string>Start a new Codex session.</string>
+	<key>Start the Gateway before connecting an MCP consumer.</key>
+	<string>Start the Gateway before connecting an MCP consumer.</string>
+	<key>Start the gateway</key>
+	<string>Start the gateway</string>
+	<key>Started</key>
+	<string>Started</string>
+	<key>Starting</key>
+	<string>Starting</string>
+	<key>State</key>
+	<string>State</string>
+	<key>Static capability boundaries for local and remote callers</key>
+	<string>Static capability boundaries for local and remote callers</string>
+	<key>Status</key>
+	<string>Status</string>
+	<key>Stop</key>
+	<string>Stop</string>
+	<key>Stop Gateway</key>
+	<string>Stop Gateway</string>
+	<key>Stopped</key>
+	<string>Stopped</string>
+	<key>Stopping</key>
+	<string>Stopping</string>
+	<key>Streamable HTTP</key>
+	<string>Streamable HTTP</string>
+	<key>Support</key>
+	<string>Support</string>
+	<key>Switching to Full Access clears this server’s saved sandbox settings.</key>
+	<string>Switching to Full Access clears this server’s saved sandbox settings.</string>
+	<key>System permissions</key>
+	<string>System permissions</string>
+	<key>TCC permissions are checked without prompting.</key>
+	<string>TCC permissions are checked without prompting.</string>
+	<key>Take screenshots and read windows, displays and accessibility information.</key>
+	<string>Take screenshots and read windows, displays and accessibility information.</string>
+	<key>The App owns the gateway process; tunnel-client connects through its local bridge.</key>
+	<string>The App owns the gateway process; tunnel-client connects through its local bridge.</string>
+	<key>The App's embedded plugin archive worker is unavailable. Check the App installation; no PATH executable was used.</key>
+	<string>The App's embedded plugin archive worker is unavailable. Check the App installation; no PATH executable was used.</string>
+	<key>The App-owned CLI link is installed and its directory is on PATH.</key>
+	<string>The App-owned CLI link is installed and its directory is on PATH.</string>
+	<key>The App-owned CLI link is installed. Add ~/.local/bin to PATH to use it by name.</key>
+	<string>The App-owned CLI link is installed. Add ~/.local/bin to PATH to use it by name.</string>
+	<key>The MCP bearer token must be nonempty printable ASCII without whitespace, at most 16 KiB.</key>
+	<string>The MCP bearer token must be nonempty printable ASCII without whitespace, at most 16 KiB.</string>
+	<key>The MCP credential is missing. Save it through the host before connecting.</key>
+	<string>The MCP credential is missing. Save it through the host before connecting.</string>
+	<key>The catalog cache could not be read or saved. Current results remain available in this process.</key>
+	<string>The catalog cache could not be read or saved. Current results remain available in this process.</string>
+	<key>The change couldn't be made.</key>
+	<string>The change couldn't be made.</string>
+	<key>The change couldn't be saved to %@'s settings.</key>
+	<string>The change couldn't be saved to %@'s settings.</string>
+	<key>The configured or discovered cloudflared executable is available.</key>
+	<string>The configured or discovered cloudflared executable is available.</string>
+	<key>The configured or discovered tunnel-client executable is available.</key>
+	<string>The configured or discovered tunnel-client executable is available.</string>
+	<key>The current saved source can't be read.</key>
+	<string>The current saved source can't be read.</string>
+	<key>The current user cannot execute this file.</key>
+	<string>The current user cannot execute this file.</string>
+	<key>The declaration excludes this host version or architecture. Select a compatible package.</key>
+	<string>The declaration excludes this host version or architecture. Select a compatible package.</string>
+	<key>The declaration permits this host version and architecture.</key>
+	<string>The declaration permits this host version and architecture.</string>
+	<key>The declared Skills directory passed package path validation. Skill contents and scripts were not executed.</key>
+	<string>The declared Skills directory passed package path validation. Skill contents and scripts were not executed.</string>
+	<key>The embedded computer-mcp bridge executable is missing. Reinstall Computer MCP.app.</key>
+	<string>The embedded computer-mcp bridge executable is missing. Reinstall Computer MCP.app.</string>
+	<key>The executable header could not be safely read; check access and retry.</key>
+	<string>The executable header could not be safely read; check access and retry.</string>
+	<key>The executable path does not identify a regular file.</key>
+	<string>The executable path does not identify a regular file.</string>
+	<key>The executable path is empty, too long or contains NUL.</key>
+	<string>The executable path is empty, too long or contains NUL.</string>
+	<key>The executable was not found in the configured location or launch search path.</key>
+	<string>The executable was not found in the configured location or launch search path.</string>
+	<key>The existing entry uses settings Computer MCP couldn't restore if replacing it failed. Remove it in %@ first.</key>
+	<string>The existing entry uses settings Computer MCP couldn't restore if replacing it failed. Remove it in %@ first.</string>
+	<key>The host cannot access the MCP credential. Check the App's Keychain identity and unlock state.</key>
+	<string>The host cannot access the MCP credential. Check the App's Keychain identity and unlock state.</string>
+	<key>The journey becomes Verified only when the audit event matches this tunnel, profile, caller identity, and current start time.</key>
+	<string>The journey becomes Verified only when the audit event matches this tunnel, profile, caller identity, and current start time.</string>
+	<key>The local Computer MCP control plane is not connected. Runtime integration must inject an AppControlPlane implementation.</key>
+	<string>The local Computer MCP control plane is not connected. Runtime integration must inject an AppControlPlane implementation.</string>
+	<key>The local MCP bridge and remote transports depend on the App-owned gateway.</key>
+	<string>The local MCP bridge and remote transports depend on the App-owned gateway.</string>
+	<key>The local Tunnel profile and its Keychain API key will be removed. The OpenAI Tunnel registration is not deleted.</key>
+	<string>The local Tunnel profile and its Keychain API key will be removed. The OpenAI Tunnel registration is not deleted.</string>
+	<key>The local named-tunnel profile and its Keychain secrets will be removed. The Cloudflare account tunnel remains user-owned.</key>
+	<string>The local named-tunnel profile and its Keychain secrets will be removed. The Cloudflare account tunnel remains user-owned.</string>
+	<key>The managed tunnel process is running.</key>
+	<string>The managed tunnel process is running.</string>
+	<key>The named-tunnel token and Computer MCP Access Token are stored in Keychain.</key>
+	<string>The named-tunnel token and Computer MCP Access Token are stored in Keychain.</string>
+	<key>The official catalog could not be refreshed. Previously verified discovery data is shown.</key>
+	<string>The official catalog could not be refreshed. Previously verified discovery data is shown.</string>
+	<key>The operation failed. Open Diagnostics for technical details.</key>
+	<string>The operation failed. Open Diagnostics for technical details.</string>
+	<key>The operation was cancelled. Check the selected source before retrying.</key>
+	<string>The operation was cancelled. Check the selected source before retrying.</string>
+	<key>The owner-only local control socket is responding.</key>
+	<string>The owner-only local control socket is responding.</string>
+	<key>The owner-only local gateway socket is accepting connections.</key>
+	<string>The owner-only local gateway socket is accepting connections.</string>
+	<key>The permission store is older than the authority already used, for example after a restore from a backup. Review the permissions below, then confirm them to resume.</key>
+	<string>The permission store is older than the authority already used, for example after a restore from a backup. Review the permissions below, then confirm them to resume.</string>
+	<key>The permissions changed while you were editing. Review them and try again.</key>
+	<string>The permissions changed while you were editing. Review them and try again.</string>
+	<key>The plugin catalog is busy. Try again shortly.</key>
+	<string>The plugin catalog is busy. Try again shortly.</string>
+	<key>The plugin catalog response exceeded its size limit.</key>
+	<string>The plugin catalog response exceeded its size limit.</string>
+	<key>The plugin publisher has limited requests. Wait before trying again.</key>
+	<string>The plugin publisher has limited requests. Wait before trying again.</string>
+	<key>The plugin publisher is unavailable. Check the connection and try again.</key>
+	<string>The plugin publisher is unavailable. Check the connection and try again.</string>
+	<key>The plugin publisher requested authentication. Public plugin requests do not use host credentials.</key>
+	<string>The plugin publisher requested authentication. Public plugin requests do not use host credentials.</string>
+	<key>The plugin publisher returned an invalid catalog response.</key>
+	<string>The plugin publisher returned an invalid catalog response.</string>
+	<key>The plugin publisher, repository, release or catalog revision does not match the verified source.</key>
+	<string>The plugin publisher, repository, release or catalog revision does not match the verified source.</string>
+	<key>The plugin request timed out. Check the connection and try again.</key>
+	<string>The plugin request timed out. Check the connection and try again.</string>
+	<key>The plugin request was refused because its destination is not allowed.</key>
+	<string>The plugin request was refused because its destination is not allowed.</string>
+	<key>The previous entry couldn't be restored. Check %@'s settings.</key>
+	<string>The previous entry couldn't be restored. Check %@'s settings.</string>
+	<key>The previous entry was restored.</key>
+	<string>The previous entry was restored.</string>
+	<key>The profile for this sign-in changed. Review it and approve again.</key>
+	<string>The profile for this sign-in changed. Review it and approve again.</string>
+	<key>The provider source changed since your previous approval. Review and confirm its permissions before enabling.</key>
+	<string>The provider source changed since your previous approval. Review and confirm its permissions before enabling.</string>
+	<key>The registration is disabled; no connection was started.</key>
+	<string>The registration is disabled; no connection was started.</string>
+	<key>The registration will be removed. External dependencies are retained.</key>
+	<string>The registration will be removed. External dependencies are retained.</string>
+	<key>The repository's plugin declaration is invalid.</key>
+	<string>The repository's plugin declaration is invalid.</string>
+	<key>The request is correlated with the current gateway or tunnel start boundary.</key>
+	<string>The request is correlated with the current gateway or tunnel start boundary.</string>
+	<key>The required credential is stored in Keychain or this profile does not require one.</key>
+	<string>The required credential is stored in Keychain or this profile does not require one.</string>
+	<key>The saved policy has no readable limits.</key>
+	<string>The saved policy has no readable limits.</string>
+	<key>The saved policy sets no limits for this context.</key>
+	<string>The saved policy sets no limits for this context.</string>
+	<key>The script has an invalid interpreter declaration for macOS.</key>
+	<string>The script has an invalid interpreter declaration for macOS.</string>
+	<key>The selected MCP did not complete connection and catalog discovery. Check the launch configuration, endpoint authentication and system permissions.</key>
+	<string>The selected MCP did not complete connection and catalog discovery. Check the launch configuration, endpoint authentication and system permissions.</string>
+	<key>The selected MCP initialized and returned its tool catalog. Tool execution and production permissions were not checked.</key>
+	<string>The selected MCP initialized and returned its tool catalog. Tool execution and production permissions were not checked.</string>
+	<key>The token is stored only in the host Keychain. New requests read the current value; changing it does not cancel already issued requests.</key>
+	<string>The token is stored only in the host Keychain. New requests read the current value; changing it does not cancel already issued requests.</string>
+	<key>The transport is healthy. Send a real request to verify it.</key>
+	<string>The transport is healthy. Send a real request to verify it.</string>
+	<key>These ceilings combine the applicable policy sources. Grants and individual connections can restrict access further.</key>
+	<string>These ceilings combine the applicable policy sources. Grants and individual connections can restrict access further.</string>
+	<key>This Mac</key>
+	<string>This Mac</string>
+	<key>This Session</key>
+	<string>This Session</string>
+	<key>This client can run commands and access files, processes, the network, and credentials available to your macOS user. A project does not limit this access. macOS privacy permissions still apply.</key>
+	<string>This client can run commands and access files, processes, the network, and credentials available to your macOS user. A project does not limit this access. macOS privacy permissions still apply.</string>
+	<key>This client or plugin is no longer available.</key>
+	<string>This client or plugin is no longer available.</string>
+	<key>This connection type is not allowed by its profile. Review the connection permissions to allow it.</key>
+	<string>This connection type is not allowed by its profile. Review the connection permissions to allow it.</string>
+	<key>This declared path could not be resolved automatically. Choose an existing local path to allow it, or leave it off.</key>
+	<string>This declared path could not be resolved automatically. Choose an existing local path to allow it, or leave it off.</string>
+	<key>This interpreter invocation needs further verification; no script or probe was executed.</key>
+	<string>This interpreter invocation needs further verification; no script or probe was executed.</string>
+	<key>This local MCP server runs in its own provider sandbox container when Sandbox is selected, using the permissions, network access, and read exceptions approved here.</key>
+	<string>This local MCP server runs in its own provider sandbox container when Sandbox is selected, using the permissions, network access, and read exceptions approved here.</string>
+	<key>This network access exceeds the reviewed limits.</key>
+	<string>This network access exceeds the reviewed limits.</string>
+	<key>This network access is not allowed by the managed limits.</key>
+	<string>This network access is not allowed by the managed limits.</string>
+	<key>This package does not declare additional permissions.</key>
+	<string>This package does not declare additional permissions.</string>
+	<key>This permission does not provide a System Settings deep link.</key>
+	<string>This permission does not provide a System Settings deep link.</string>
+	<key>This plugin isn't available for this Mac</key>
+	<string>This plugin isn't available for this Mac</string>
+	<key>This plugin needs an update</key>
+	<string>This plugin needs an update</string>
+	<key>This principal is no longer available.</key>
+	<string>This principal is no longer available.</string>
+	<key>This profile has no allowed callers.</key>
+	<string>This profile has no allowed callers.</string>
+	<key>This removes the local project grant. It does not delete the folder or its contents.</key>
+	<string>This removes the local project grant. It does not delete the folder or its contents.</string>
+	<key>This sign-in request expired. Ask the client to sign in again.</key>
+	<string>This sign-in request expired. Ask the client to sign in again.</string>
+	<key>This source limits everything it could limit until it can be read.</key>
+	<string>This source limits everything it could limit until it can be read.</string>
+	<key>Through %@</key>
+	<string>Through %@</string>
+	<key>Tool exposure</key>
+	<string>Tool exposure</string>
+	<key>Tool names, one per line</key>
+	<string>Tool names, one per line</string>
+	<key>Tool prefix</key>
+	<string>Tool prefix</string>
+	<key>Transport</key>
+	<string>Transport</string>
+	<key>Trusted Hosts</key>
+	<string>Trusted Hosts</string>
+	<key>Trusted Hosts and %@</key>
+	<string>Trusted Hosts and %@</string>
+	<key>Trusted hosts</key>
+	<string>Trusted hosts</string>
+	<key>Tunnel %@ · %@</key>
+	<string>Tunnel %@ · %@</string>
+	<key>Tunnel '%@' is already running with profile %@. Stop it before starting %@.</key>
+	<string>Tunnel '%@' is already running with profile %@. Stop it before starting %@.</string>
+	<key>Tunnel '%@' is configured to stay running with profile %@. Stop it before activating %@.</key>
+	<string>Tunnel '%@' is configured to stay running with profile %@. Stop it before activating %@.</string>
+	<key>Tunnel ID</key>
+	<string>Tunnel ID</string>
+	<key>Tunnel Logs</key>
+	<string>Tunnel Logs</string>
+	<key>Tunnel client profile</key>
+	<string>Tunnel client profile</string>
+	<key>Tunnel credential is missing</key>
+	<string>Tunnel credential is missing</string>
+	<key>Tunnel credential is ready</key>
+	<string>Tunnel credential is ready</string>
+	<key>Tunnel diagnostics failed.</key>
+	<string>Tunnel diagnostics failed.</string>
+	<key>Tunnel eligible</key>
+	<string>Tunnel eligible</string>
+	<key>Tunnel failed</key>
+	<string>Tunnel failed</string>
+	<key>Tunnel gateway profile must be chatgpt-observe or chatgpt-operate.</key>
+	<string>Tunnel gateway profile must be chatgpt-observe or chatgpt-operate.</string>
+	<key>Tunnel is not running</key>
+	<string>Tunnel is not running</string>
+	<key>Tunnel is running</key>
+	<string>Tunnel is running</string>
+	<key>Tunnel provisioning failed.</key>
+	<string>Tunnel provisioning failed.</string>
+	<key>Tunnel state is changing</key>
+	<string>Tunnel state is changing</string>
+	<key>Tunnels</key>
+	<string>Tunnels</string>
+	<key>Turn on Computer MCP for %@.</key>
+	<string>Turn on Computer MCP for %@.</string>
+	<key>Turn on Computer MCP under Accessibility.</key>
+	<string>Turn on Computer MCP under Accessibility.</string>
+	<key>Turn on Computer MCP under Screen &amp; System Audio Recording.</key>
+	<string>Turn on Computer MCP under Screen &amp; System Audio Recording.</string>
+	<key>Unable to activate manifest</key>
+	<string>Unable to activate manifest</string>
+	<key>Unable to activate profile</key>
+	<string>Unable to activate profile</string>
+	<key>Unable to delete Cloudflare Tunnel</key>
+	<string>Unable to delete Cloudflare Tunnel</string>
+	<key>Unable to delete tunnel</key>
+	<string>Unable to delete tunnel</string>
+	<key>Unable to export diagnostics</key>
+	<string>Unable to export diagnostics</string>
+	<key>Unable to install command line tool</key>
+	<string>Unable to install command line tool</string>
+	<key>Unable to open System Settings</key>
+	<string>Unable to open System Settings</string>
+	<key>Unable to provision tunnel</key>
+	<string>Unable to provision tunnel</string>
+	<key>Unable to reconnect tunnel</key>
+	<string>Unable to reconnect tunnel</string>
+	<key>Unable to register project</key>
+	<string>Unable to register project</string>
+	<key>Unable to remove project</key>
+	<string>Unable to remove project</string>
+	<key>Unable to repair project</key>
+	<string>Unable to repair project</string>
+	<key>Unable to request %@</key>
+	<string>Unable to request %@</string>
+	<key>Unable to roll back manifest</key>
+	<string>Unable to roll back manifest</string>
+	<key>Unable to save Cloudflare Tunnel</key>
+	<string>Unable to save Cloudflare Tunnel</string>
+	<key>Unable to save tunnel</key>
+	<string>Unable to save tunnel</string>
+	<key>Unable to select project</key>
+	<string>Unable to select project</string>
+	<key>Unable to start Cloudflare Tunnel</key>
+	<string>Unable to start Cloudflare Tunnel</string>
+	<key>Unable to start Computer MCP</key>
+	<string>Unable to start Computer MCP</string>
+	<key>Unable to start gateway</key>
+	<string>Unable to start gateway</string>
+	<key>Unable to start provider</key>
+	<string>Unable to start provider</string>
+	<key>Unable to start tunnel</key>
+	<string>Unable to start tunnel</string>
+	<key>Unable to stop Cloudflare Tunnel</key>
+	<string>Unable to stop Cloudflare Tunnel</string>
+	<key>Unable to stop gateway</key>
+	<string>Unable to stop gateway</string>
+	<key>Unable to stop provider</key>
+	<string>Unable to stop provider</string>
+	<key>Unable to stop tunnel</key>
+	<string>Unable to stop tunnel</string>
+	<key>Unable to update launch at login</key>
+	<string>Unable to update launch at login</string>
+	<key>Unable to update project access</key>
+	<string>Unable to update project access</string>
+	<key>Unavailable</key>
+	<string>Unavailable</string>
+	<key>Unbounded</key>
+	<string>Unbounded</string>
+	<key>Unified Logs</key>
+	<string>Unified Logs</string>
+	<key>Uninstall</key>
+	<string>Uninstall</string>
+	<key>Uninstall this archive?</key>
+	<string>Uninstall this archive?</string>
+	<key>Unknown Tunnel profile: %@</key>
+	<string>Unknown Tunnel profile: %@</string>
+	<key>Unknown gateway profile: %@</key>
+	<string>Unknown gateway profile: %@</string>
+	<key>Unknown macOS permission: %@</key>
+	<string>Unknown macOS permission: %@</string>
+	<key>Update</key>
+	<string>Update</string>
+	<key>Update Computer MCP in %@?</key>
+	<string>Update Computer MCP in %@?</string>
+	<key>Update Computer MCP to use this plugin</key>
+	<string>Update Computer MCP to use this plugin</string>
+	<key>Updated Computer MCP in %@</key>
+	<string>Updated Computer MCP in %@</string>
+	<key>Update…</key>
+	<string>Update…</string>
+	<key>Use</key>
+	<string>Use</string>
+	<key>Use Folder</key>
+	<string>Use Folder</string>
+	<key>Use Sandbox</key>
+	<string>Use Sandbox</string>
+	<key>Use bundled fallback</key>
+	<string>Use bundled fallback</string>
+	<key>Use sandbox</key>
+	<string>Use sandbox</string>
+	<key>Use the MCP servers you registered.</key>
+	<string>Use the MCP servers you registered.</string>
+	<key>Use the keyboard and pointer, perform accessibility actions and open files in apps. This acts on your whole desktop, outside any sandbox.</key>
+	<string>Use the keyboard and pointer, perform accessibility actions and open files in apps. This acts on your whole desktop, outside any sandbox.</string>
+	<key>Use the tools and skills that plugins contribute.</key>
+	<string>Use the tools and skills that plugins contribute.</string>
+	<key>Use this source</key>
+	<string>Use this source</string>
+	<key>Use wildcard setting (%@)</key>
+	<string>Use wildcard setting (%@)</string>
+	<key>Uses the default project network setting</key>
+	<string>Uses the default project network setting</string>
+	<key>Uses the package's startup arguments.</key>
+	<string>Uses the package's startup arguments.</string>
+	<key>Validate and Activate</key>
+	<string>Validate and Activate</string>
+	<key>Verification details</key>
+	<string>Verification details</string>
+	<key>Verified</key>
+	<string>Verified</string>
+	<key>Verified by a real successful request</key>
+	<string>Verified by a real successful request</string>
+	<key>Verify the remote connection</key>
+	<string>Verify the remote connection</string>
+	<key>Verify with a real request</key>
+	<string>Verify with a real request</string>
+	<key>Version</key>
+	<string>Version</string>
+	<key>Version %@</key>
+	<string>Version %@</string>
+	<key>Wait for the Gateway to finish changing state, then run the check again.</key>
+	<string>Wait for the Gateway to finish changing state, then run the check again.</string>
+	<key>Wait for the tunnel to finish changing state, then run the check again.</key>
+	<string>Wait for the tunnel to finish changing state, then run the check again.</string>
+	<key>Waiting for process cleanup</key>
+	<string>Waiting for process cleanup</string>
+	<key>Warning</key>
+	<string>Warning</string>
+	<key>Welcome to Computer MCP</key>
+	<string>Welcome to Computer MCP</string>
+	<key>Without a matching bundled package, contributions remain unavailable.</key>
+	<string>Without a matching bundled package, contributions remain unavailable.</string>
+	<key>Working directory</key>
+	<string>Working directory</string>
+	<key>Working…</key>
+	<string>Working…</string>
+	<key>Write</key>
+	<string>Write</string>
+	<key>Wrong target</key>
+	<string>Wrong target</string>
+	<key>You can retry any step without recreating the connection. Secrets remain in Keychain and are never included in diagnostics.</key>
+	<string>You can retry any step without recreating the connection. Secrets remain in Keychain and are never included in diagnostics.</string>
+	<key>Your draft is preserved. Review the current source before saving or clearing.</key>
+	<string>Your draft is preserved. Review the current source before saving or clearing.</string>
+	<key>adding the new entry</key>
+	<string>adding the new entry</string>
+	<key>checking its command</key>
+	<string>checking its command</string>
+	<key>cloudflared PID %@</key>
+	<string>cloudflared PID %@</string>
+	<key>cloudflared executable</key>
+	<string>cloudflared executable</string>
+	<key>cloudflared is available</key>
+	<string>cloudflared is available</string>
+	<key>cloudflared is unavailable</key>
+	<string>cloudflared is unavailable</string>
+	<key>commits.action.review</key>
+	<string>Review Selected…</string>
+	<key>commits.dialog.release.confirm</key>
+	<string>Release Selected</string>
+	<key>commits.dialog.release.title</key>
+	<string>Release selected records (%lld)?</string>
+	<key>commits.empty.message</key>
+	<string>The host has no records retained for recovery.</string>
+	<key>commits.empty.title</key>
+	<string>No Retained Commits</string>
+	<key>commits.section.title</key>
+	<string>Retained Commits</string>
+	<key>commits.selection.count</key>
+	<string>%lld selected</string>
+	<key>commits.selection.none</key>
+	<string>Select records to review or release</string>
+	<key>commits.standalone.footer</key>
+	<string>Retained commits remain available for review and release even after their branch or project is removed.</string>
+	<key>commits.standalone.title</key>
+	<string>Retained Commits &amp; Storage</string>
+	<key>commits.tag.project_removed</key>
+	<string>Project removed</string>
+	<key>common.cancel</key>
+	<string>Cancel</string>
+	<key>common.clear_selection</key>
+	<string>Clear</string>
+	<key>common.refresh</key>
+	<string>Refresh</string>
+	<key>common.resume</key>
+	<string>Resume</string>
+	<key>common.select_all</key>
+	<string>Select All</string>
+	<key>entry.privacy.row_subtitle</key>
+	<string>Review retained commits and reclaim released storage</string>
+	<key>entry.privacy.row_title</key>
+	<string>Retained Commits &amp; Storage</string>
+	<key>entry.projects.section_title</key>
+	<string>Worktrees &amp; Recovery</string>
+	<key>grant.a11y.openSourceHint</key>
+	<string>Opens the source setting where this permission can be edited.</string>
+	<key>grant.a11y.savedAndEffective</key>
+	<string>Saved %1$@, effective %2$@</string>
+	<key>grant.choice.allow</key>
+	<string>Allow</string>
+	<key>grant.choice.askEveryTime</key>
+	<string>Ask Every Time</string>
+	<key>grant.choice.dontAllow</key>
+	<string>Don't Allow</string>
+	<key>grant.effective.format</key>
+	<string>Effective: %@</string>
+	<key>grant.oneTime.retryClarification</key>
+	<string>After approval, the requester must explicitly retry the same action.</string>
+	<key>grant.projectRegistration.title</key>
+	<string>Project Registration</string>
+	<key>grant.saved.format</key>
+	<string>Saved: %@</string>
+	<key>grant.source.editAction</key>
+	<string>Edit Source</string>
+	<key>grant.status.inherited</key>
+	<string>Inherited</string>
+	<key>grant.status.limited</key>
+	<string>Limited</string>
+	<key>grant.status.unavailable</key>
+	<string>Unavailable</string>
+	<key>https://%@/mcp</key>
+	<string>https://%@/mcp</string>
+	<key>iCloud Drive</key>
+	<string>iCloud Drive</string>
+	<key>macOS privacy access used by enabled endpoints</key>
+	<string>macOS privacy access used by enabled endpoints</string>
+	<key>operation.kind.reclaiming_storage</key>
+	<string>Reclaiming storage</string>
+	<key>operation.kind.releasing_commits</key>
+	<string>Releasing retained commits</string>
+	<key>operation.kind.removing_worktree</key>
+	<string>Removing worktree</string>
+	<key>principal.a11y.revoke</key>
+	<string>Revoke access for %@</string>
+	<key>principal.action.revoke</key>
+	<string>Revoke…</string>
+	<key>reading its settings</key>
+	<string>reading its settings</string>
+	<key>recovery.gate_identity_changed</key>
+	<string>Writer admission now belongs to a different generation.</string>
+	<key>recovery.gate_pending</key>
+	<string>Writer admission is still being reopened.</string>
+	<key>recovery.last_branch</key>
+	<string>Recorded branch: %@</string>
+	<key>recovery.object.blob</key>
+	<string>Blob</string>
+	<key>recovery.object.commit</key>
+	<string>Commit</string>
+	<key>recovery.object.tag</key>
+	<string>Tag</string>
+	<key>recovery.object.tree</key>
+	<string>Tree</string>
+	<key>recovery.operation_failed</key>
+	<string>The operation could not be completed.</string>
+	<key>recovery.operation_interrupted</key>
+	<string>Recovery operation interrupted</string>
+	<key>recovery.record_in_use</key>
+	<string>Required by another operation or protected history</string>
+	<key>recovery.record_pending</key>
+	<string>Operation pending</string>
+	<key>recovery.release_completed</key>
+	<string>Released records: %lld</string>
+	<key>recovery.release_completed_detail</key>
+	<string>Run storage reclamation separately to measure reclaimed space.</string>
+	<key>recovery.release_review_detail</key>
+	<string>Review the exact records to release. Storage reclamation can run separately afterward.</string>
+	<key>recovery.requires_attention</key>
+	<string>Recovery needs attention</string>
+	<key>recovery.restore_review</key>
+	<string>Review restored permissions in Privacy &amp; Security before making changes.</string>
+	<key>recovery.review_changed</key>
+	<string>The reviewed selection changed. Refresh and review it again.</string>
+	<key>recovery.store_generation</key>
+	<string>Store generation</string>
+	<key>recovery.store_identity</key>
+	<string>Recovery store</string>
+	<key>removing the old entry</key>
+	<string>removing the old entry</string>
+	<key>restoring the previous entry</key>
+	<string>restoring the previous entry</string>
+	<key>revocation.dialog.cancel</key>
+	<string>Cancel</string>
+	<key>revocation.dialog.confirm</key>
+	<string>Revoke Access</string>
+	<key>revocation.dialog.message</key>
+	<string>This denies this permission and ends running programs that depend on it.</string>
+	<key>revocation.dialog.scopedTitle</key>
+	<string>Revoke “%1$@” for “%2$@”?</string>
+	<key>saving the entry</key>
+	<string>saving the entry</string>
+	<key>storage.action.reclaim</key>
+	<string>Reclaim Storage…</string>
+	<key>storage.allocation</key>
+	<string>Allocated before: %@ · After: %@</string>
+	<key>storage.description</key>
+	<string>Logical release removes recovery records without immediately freeing disk space. Run reclamation when you want to reclaim storage.</string>
+	<key>storage.dialog.reclaim.confirm</key>
+	<string>Reclaim Storage</string>
+	<key>storage.dialog.reclaim.message</key>
+	<string>Runs storage reclamation for logically released records and reports measured reclaimed space after completion.</string>
+	<key>storage.dialog.reclaim.title</key>
+	<string>Reclaim released storage?</string>
+	<key>storage.reclamation_deferred</key>
+	<string>Recovery store is busy</string>
+	<key>storage.result.measured</key>
+	<string>Measured %@ reclaimed on %@.</string>
+	<key>storage.result.none_reclaimed</key>
+	<string>Reclamation checked on %@. No disk space was reclaimed.</string>
+	<key>storage.review.allocated</key>
+	<string>Current allocated space</string>
+	<key>storage.review.pack</key>
+	<string>Pack identity</string>
+	<key>storage.section.title</key>
+	<string>Storage Reclamation</string>
+	<key>the change</key>
+	<string>the change</string>
+	<key>tunnel-client executable</key>
+	<string>tunnel-client executable</string>
+	<key>worktree.action.remove</key>
+	<string>Remove…</string>
+	<key>worktree.action.review_discard</key>
+	<string>Review Discard…</string>
+	<key>worktree.dialog.discard.title</key>
+	<string>Discard uncommitted changes in “%@”?</string>
+	<key>worktree.dialog.discard_remove.confirm</key>
+	<string>Discard Changes and Remove</string>
+	<key>worktree.dialog.discard_remove.message</key>
+	<string>Removing this checkout permanently discards all of its uncommitted changes, including staged, untracked, and ignored files.</string>
+	<key>worktree.dialog.remove.confirm</key>
+	<string>Remove Worktree</string>
+	<key>worktree.dialog.remove.title</key>
+	<string>Remove worktree “%@”?</string>
+	<key>worktree.empty.message</key>
+	<string>No managed or detected worktrees are recorded for this project.</string>
+	<key>worktree.empty.title</key>
+	<string>No Worktrees</string>
+	<key>worktree.inventory.unavailable</key>
+	<string>The source checkout is unavailable.</string>
+	<key>worktree.removal.pending</key>
+	<string>Worktree removal awaiting confirmation</string>
+	<key>worktree.removal.refused</key>
+	<string>Worktree removal was refused</string>
+	<key>worktree.removal.review_detail</key>
+	<string>Stops writers and removes this managed checkout. Committed recovery records remain available.</string>
+	<key>worktree.removal.verified</key>
+	<string>Worktree removal verified</string>
+	<key>worktree.review.head</key>
+	<string>Current commit</string>
+	<key>worktree.section.title</key>
+	<string>Worktrees</string>
+	<key>worktree.state.external</key>
+	<string>External</string>
+	<key>worktree.state.managed</key>
+	<string>Managed</string>
+	<key>worktree.state.removed</key>
+	<string>Removed</string>
+	<key>worktree.state.unavailable</key>
+	<string>Unavailable</string>
+	<key>worktree.status.clean</key>
+	<string>Clean</string>
+	<key>worktree.status.uncommitted</key>
+	<string>Uncommitted changes</string>
+	<key>worktree.writers.drained</key>
+	<string>Admitted writers stopped and removal was confirmed.</string>
+	<key>“%1$@” %2$@ has no package for this Mac (%3$@).</key>
+	<string>“%1$@” %2$@ has no package for this Mac (%3$@).</string>
+	<key>“%1$@” %2$@ requires Computer MCP %3$@ or later. This is Computer MCP %4$@.</key>
+	<string>“%1$@” %2$@ requires Computer MCP %3$@ or later. This is Computer MCP %4$@.</string>
+	<key>“%1$@” %2$@ supports Computer MCP versions earlier than %3$@. This is Computer MCP %4$@.</key>
+	<string>“%1$@” %2$@ supports Computer MCP versions earlier than %3$@. This is Computer MCP %4$@.</string>
+	<key>“%1$@” %2$@ uses plugin API %3$@, which this version of Computer MCP no longer supports. It supports plugin API %4$@.</key>
+	<string>“%1$@” %2$@ uses plugin API %3$@, which this version of Computer MCP no longer supports. It supports plugin API %4$@.</string>
+	<key>“%1$@” %2$@ uses plugin API %3$@. This version of Computer MCP supports plugin API %4$@.</key>
+	<string>“%1$@” %2$@ uses plugin API %3$@. This version of Computer MCP supports plugin API %4$@.</string>
+	<key>“%1$@” would like to connect to “%2$@” from “%3$@”.</key>
+	<string>“%1$@” would like to connect to “%2$@” from “%3$@”.</string>
+	<key>“%1$@” would like to read and change “%2$@”.</key>
+	<string>“%1$@” would like to read and change “%2$@”.</string>
+	<key>“%1$@” would like to read “%2$@”.</key>
+	<string>“%1$@” would like to read “%2$@”.</string>
+	<key>“%1$@” would like to use “%2$@”.</key>
+	<string>“%1$@” would like to use “%2$@”.</string>
+</dict>
+</plist>

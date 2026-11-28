@@ -29,10 +29,11 @@ class SwiftTestPartition(unittest.TestCase):
                 swift_tests.main()
             debug, optimized = (call.args[0] for call in invoke.call_args_list)
             self.assertEqual(debug[:-1], ["/usr/bin/swift", "test", "--no-parallel", "--configuration", "debug", "--skip"])
-            self.assertEqual(optimized[:7], ["/usr/bin/swift", "test", "--no-parallel", "--configuration", "release",
-                                             "--disable-xctest", "--filter"])
             selector = debug[-1]
-            self.assertEqual(optimized[7], selector)
+            self.assertEqual(optimized[:-1], [
+                "/usr/bin/swift", "test", "--no-parallel", "--configuration", "release", "--build-system", "swiftbuild",
+                "--test-product", module_suite.split(".")[0], "--disable-xctest", "--filter", selector, "--xunit-output",
+            ])
             self.assertRegex(swift_tests.OPTIMIZED_TEST, selector)
             self.assertRegex(swift_tests.OPTIMIZED_TEST + "/Source.swift:1:1", selector)
             self.assertIsNone(re.search(selector, f"{module_suite}/{method[:-2]}Suffix()"))
